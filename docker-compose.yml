@@ -1,0 +1,33 @@
+version: '3.8'
+
+services:
+  epkeeper-chatbot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: epkeeper-chatbot
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+    # 如果需要持久化数据，可以添加 volumes
+    # volumes:
+    #   - ./data:/app/data
+    networks:
+      - app-network
+    # 资源限制（可选）
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+
+networks:
+  app-network:
+    driver: bridge
+

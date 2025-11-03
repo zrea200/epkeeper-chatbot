@@ -1,0 +1,257 @@
+import qaDatabase from '@/data/qa-database.json';
+import AI_CONFIG from '@/config/ai-config';
+
+export interface QAResult {
+  question: string;
+  answer: string;
+  confidence: number;
+}
+
+/**
+ * 计算两个字符串的相似度（简单的关键词匹配）
+ */
+function calculateSimilarity(input: string, keywords: string[]): number {
+  const normalizedInput = input.toLowerCase().trim();
+  let matchCount = 0;
+  
+  for (const keyword of keywords) {
+    if (normalizedInput.includes(keyword.toLowerCase())) {
+      matchCount++;
+    }
+  }
+  
+  return matchCount / keywords.length;
+}
+
+/**
+ * 根据用户输入匹配最佳答案
+ */
+export function findBestAnswer(userInput: string): QAResult | null {
+  if (!userInput || userInput.trim().length === 0) {
+    return null;
+  }
+
+  let bestMatch: QAResult | null = null;
+  let highestConfidence = 0;
+
+  // 遍历所有分类和问题
+  for (const category of qaDatabase.categories) {
+    for (const qa of category.questions) {
+      const confidence = calculateSimilarity(userInput, qa.keywords);
+      
+      if (confidence > highestConfidence && confidence > 0.3) {
+        highestConfidence = confidence;
+        bestMatch = {
+          question: qa.question,
+          answer: qa.answer,
+          confidence,
+        };
+      }
+    }
+  }
+
+  return bestMatch;
+}
+
+/**
+ * 获取默认欢迎语
+ */
+export function getGreeting(): string {
+  return qaDatabase.defaultGreeting;
+}
+
+/**
+ * 获取快捷问题列表
+ */
+export function getQuickQuestions(): string[] {
+  return qaDatabase.quickQuestions;
+}
+
+/**
+ * 获取兜底回复
+ */
+export function getFallbackResponse(): string {
+  return qaDatabase.fallbackResponse;
+}
+
+/**
+ * 获取联系信息
+ */
+export function getContactInfo() {
+  return qaDatabase.contactInfo;
+}
+
+/**
+ * 调用 Langcore AI 接口（非流式）
+ */
+export async function getAIResponse(userInput: string): Promise<string> {
+  try {
+    const response = await fetch(AI_CONFIG.url, {
+      method: 'POST',
+      headers: {
+        'accept': '*/*',
+        'authorization': AI_CONFIG.authorization,
+        'content-type': 'application/json',
+        'origin': window.location.origin,
+        'referer': window.location.origin + '/',
+      },
+      body: JSON.stringify({
+        input: {
+          input: userInput,
+        },
+        isExpression: false,
+        runMode: 'blocking', // 使用阻塞模式获取完整响应
+        simplifiedLog: true,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`AI API 请求失败: ${response.status}`);
+    }
+
+    const data = await response.json();
+    
+    // 根据 Langcore API 返回格式解析结果
+    // 实际返回格式: { output: { output: "回复内容" } }
+    if (data.output && data.output.output) {
+      return data.output.output;
+    }
+    
+    return data.output || data.result || data.answer || '抱歉，AI 暂时无法回答这个问题';
+  } catch (error) {
+    console.error('AI 接口调用失败:', error);
+    
+    // 降级到关键词匹配
+    const fallbackResult = findBestAnswer(userInput);
+    if (fallbackResult) {
+      return fallbackResult.answer;
+    }
+    
+    return getFallbackResponse();
+  }
+}
+
+/**
+ * 调用 Langcore AI 接口（流式响应）
+ * @param userInput 用户输入
+ * @param onChunk 收到数据块时的回调
+ * @param onComplete 完成时的回调
+ * @param onError 错误时的回调
+ */
+export async function getAIResponseStream(
+  userInput: string,
+  onChunk: (text: string) => void,
+  onComplete: () => void,
+  onError: (error: Error) => void
+): Promise<void> {
+  try {
+    const response = await fetch(AI_CONFIG.url, {
+      method: 'POST',
+      headers: {
+        'accept': '*/*',
+        'authorization': AI_CONFIG.authorization,
+        'content-type': 'application/json',
+        'origin': window.location.origin,
+        'referer': window.location.origin + '/',
+      },
+      body: JSON.stringify({
+        input: {
+          input: userInput,
+        },
+        isExpression: false,
+        runMode: 'stream', // 使用流式模式
+        simplifiedLog: true,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`AI API 请求失败: ${response.status}`);
+    }
+
+    const reader = response.body?.getReader();
+    if (!reader) {
+      throw new Error('无法获取响应流');
+    }
+
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let hasReceivedContent = false;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      
+      if (done) {
+        if (!hasReceivedContent) {
+          onChunk('抱歉，AI 暂时无法回答这个问题');
+        }
+        onComplete();
+        break;
+      }
+
+      // 解码数据块
+      buffer += decoder.decode(value, { stream: true });
+      
+      // 按行分割（SSE 格式通常是按行的）
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || ''; // 保留最后一个不完整的行
+
+      for (const line of lines) {
+        if (!line.trim()) continue;
+
+        try {
+          // 处理 SSE 格式: data: {...}
+          let jsonStr = line;
+          if (line.startsWith('data: ')) {
+            jsonStr = line.substring(6);
+          }
+
+          if (jsonStr === '[DONE]') {
+            onComplete();
+            return;
+          }
+
+          const data = JSON.parse(jsonStr);
+          
+          // Langcore API 在最后一条 status=SUCCEED 的数据中返回完整结果
+          // 格式: { status: "SUCCEED", output: { output: "完整回复内容" } }
+          if (data.status === 'SUCCEED' && data.output && data.output.output) {
+            const fullResponse = data.output.output;
+            
+            if (fullResponse && !hasReceivedContent) {
+              hasReceivedContent = true;
+              
+              // 模拟打字机效果：逐字显示
+              const chars = fullResponse.split('');
+              let currentText = '';
+              
+              for (const char of chars) {
+                currentText += char;
+                onChunk(currentText);
+                // 添加小延迟以模拟打字效果
+                await new Promise(resolve => setTimeout(resolve, 20));
+              }
+              
+              onComplete();
+              return;
+            }
+          }
+        } catch (e) {
+          // 忽略解析错误，继续处理下一行
+          console.warn('解析数据块失败:', line, e);
+        }
+      }
+    }
+  } catch (error) {
+    console.error('AI 流式接口调用失败:', error);
+    onError(error as Error);
+    
+    // 降级到关键词匹配
+    const fallbackResult = findBestAnswer(userInput);
+    if (fallbackResult) {
+      onChunk(fallbackResult.answer);
+    } else {
+      onChunk(getFallbackResponse());
+    }
+    onComplete();
+  }
+}
