@@ -19,8 +19,8 @@ export default function ChatMessage({
   message, 
   accentColor, 
   accentBgColor, 
-  botAvatarUrl = '/avatars/Asset7@4x.png',
-  userAvatarUrl = '/avatars/Asset8@4x.png'
+  botAvatarUrl = '/avatars/Asset5@4x.png',
+  userAvatarUrl = '/avatars/Asset5@4x.png'
 }: ChatMessageProps) {
   const isBot = message.type === 'bot';
 

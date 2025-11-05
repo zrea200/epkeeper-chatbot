@@ -5,8 +5,10 @@ FROM node:20-alpine AS builder
 # 设置工作目录
 WORKDIR /app
 
-# 直接用 npm 全局安装指定版本的 pnpm
-RUN npm install -g pnpm@10.4.1
+# 配置 npm 镜像源（加速下载）并安装 pnpm
+RUN npm config set registry https://registry.npmmirror.com && \
+    npm install -g pnpm@10.4.1 && \
+    pnpm config set registry https://registry.npmmirror.com
 
 # 复制 package.json 和 lockfile
 COPY package.json pnpm-lock.yaml ./

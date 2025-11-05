@@ -316,7 +316,7 @@ export default function Chat() {
                 <DotLottieReact
                   src={
                     isSpeaking
-                      ? "/3D Chef Dancing.json"  // AI说话状态
+                      ? "/2.json"  // AI说话状态
                       : isThinking
                       ? "/Spin.json"              // 思考状态
                       : isListening
