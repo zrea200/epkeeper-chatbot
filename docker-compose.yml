@@ -3,10 +3,14 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      # 如果遇到网络问题，取消下面两行的注释使用 host 网络构建
+      # network: host
+      # extra_hosts:
+      #   - "host.docker.internal:host-gateway"
     container_name: epkeeper-chatbot
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "51872:3000"
     environment:
       - NODE_ENV=production
       - PORT=3000

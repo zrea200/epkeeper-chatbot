@@ -1,0 +1,32 @@
+services:
+  epkeeper-chatbot-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+      network: host
+    container_name: epkeeper-chatbot-dev
+    restart: unless-stopped
+    ports:
+      - "51872:3000"  # Vite 开发服务器端口（配置的是 3000 而非默认的 5173）
+    environment:
+      - NODE_ENV=development
+    # 挂载源代码，实现热重载
+    volumes:
+      - ./client:/app/client
+      - ./server:/app/server
+      - ./shared:/app/shared
+      - ./package.json:/app/package.json
+      - ./tsconfig.json:/app/tsconfig.json
+      - ./vite.config.ts:/app/vite.config.ts
+      # 不挂载 node_modules，使用容器内的
+      - node_modules:/app/node_modules
+    networks:
+      - dev-network
+
+volumes:
+  node_modules:
+
+networks:
+  dev-network:
+    driver: bridge
+

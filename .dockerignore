@@ -33,15 +33,24 @@ coverage
 .DS_Store
 Thumbs.db
 
-# 文档（可选，如果不需要打包到镜像中）
+# 文档（减少镜像大小）
 *.md
 !README.md
+docs/
 
 # Docker 相关
 Dockerfile
 .dockerignore
 docker-compose.yml
+*.sh
+
+# 部署脚本和文档（不需要打包到镜像）
+deploy.sh
+redeploy.sh
+redeploy-clean.sh
+DEPLOYMENT.md
+QUICK_DEPLOY.md
+DEPLOY_CHEATSHEET.md
 
 # 其他
 todo.md
-

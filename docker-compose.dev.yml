@@ -1,0 +1,42 @@
+version: '3.8'
+
+services:
+  epkeeper-chatbot-dev:
+    image: node:20-alpine
+    container_name: epkeeper-chatbot-dev
+    restart: unless-stopped
+    working_dir: /app
+    ports:
+      - "51872:5173"  # Vite 开发服务器端口
+      - "3000:3000"   # 后端端口
+    environment:
+      - NODE_ENV=development
+      - PORT=3000
+    # 挂载代码目录，实现热重载
+    volumes:
+      - ./:/app
+      - /app/node_modules  # 避免本地 node_modules 覆盖容器内的
+    # 使用 host 网络解决构建时的网络问题（可选）
+    # network_mode: host
+    command: sh -c "
+      if [ ! -f /usr/local/bin/pnpm ]; then
+        echo '安装 pnpm...';
+        wget -qO- https://get.pnpm.io/install.sh | sh -;
+        export PNPM_HOME=\"/root/.local/share/pnpm\";
+        export PATH=\"\$PNPM_HOME:\$PATH\";
+        ln -sf /root/.local/share/pnpm/pnpm /usr/local/bin/pnpm;
+      fi &&
+      if [ ! -d node_modules ]; then
+        echo '安装依赖...';
+        pnpm install;
+      fi &&
+      echo '启动开发服务器...' &&
+      pnpm run dev
+      "
+    networks:
+      - dev-network
+
+networks:
+  dev-network:
+    driver: bridge
+
