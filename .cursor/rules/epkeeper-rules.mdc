@@ -1,0 +1,108 @@
+---
+title: epkeeper-workspace-rules
+alwaysApply: true
+tags:
+  - typescript
+  - react
+  - vite
+  - express
+  - nodejs
+  - docker
+scope:
+  paths:
+    - /home/zrea/epkeeper-chatbot/**
+description: 统一工作区规则，规范对话输出、代码风格、安全约束与上下文偏好。
+---
+
+## 对话与输出
+
+- 所有回答使用简体中文。
+
+- 仅对必要内容使用 Markdown；代码片段必须使用正确语言高亮。
+
+- 当引用仓库现有代码时，优先使用代码引用块，包含文件路径与行号。
+
+- 回答要简洁可扫读，优先给"可直接运行/粘贴"的内容。
+
+## 代码与工程偏好
+
+- TypeScript: 版本优先 5.6+；严格模式开启，使用 ES Module。
+
+- 前端框架：React 18+，使用 Vite 构建，路由使用 wouter。
+
+- 后端：Express 4+，Node.js 18+，使用 ES Module。
+
+- 路径：优先使用绝对路径（如 `/home/zrea/epkeeper-chatbot/...`）。
+
+- 日志：使用结构化日志，保留错误堆栈；前端使用 vconsole 调试。
+
+- Lint/格式：使用 Prettier，TypeScript 严格检查。
+
+- 包管理：使用 pnpm，版本锁定在 pnpm-lock.yaml。
+
+- 测试：使用 vitest，新功能需最小可验证用例。
+
+## Docker/Compose
+
+- 以 `docker-compose.yml` 为主，严禁在回答中擅自改变现有服务名与端口映射。
+
+- 生产与开发区分：使用 `docker-compose.dev.yml` 或 `docker-compose.dev-simple.yml` 作为开发配置。
+
+- 默认端口：前端 3001，后端服务端口通过环境变量 `PORT` 配置（默认 3000）。
+
+## 语音识别与合成
+
+- 百度语音 API：使用服务端代理方案（`/api/asr/baidu`），避免微信浏览器跨域限制。
+
+- 前端不再直接调用百度 API，所有请求通过服务端代理。
+
+- API Key 和 Secret Key 通过环境变量或配置文件管理，不在代码中硬编码。
+
+## 安全与合规
+
+- 不回显密钥、密码、令牌、私有 URL。
+
+- 对敏感操作（删除、覆盖、变更权限）默认不执行，需明确确认。
+
+- 环境变量使用 `.env` 文件，参考 `env.example` 格式。
+
+- 服务端代理接口需要适当的 CORS 配置，但生产环境应限制来源。
+
+## 回答风格细则
+
+- 给操作步骤时，先列"必要步骤"，再给"可选优化"。
+
+- 涉及文件更改，标注文件路径，并给出最小有效 edits。
+
+- 若存在多方案，按"推荐顺序"排列，并给简短对比依据。
+
+- 前端代码使用函数式组件和 Hooks，避免类组件。
+
+## 与现有项目上下文
+
+- 项目结构：
+  - `client/` - 前端 React 应用
+  - `server/` - 后端 Express 服务
+  - `shared/` - 共享代码
+  - `docs/` - 文档目录（已清理，不再创建 .md 文档）
+
+- 构建命令：
+  - `pnpm dev` - 开发模式
+  - `pnpm build` - 构建生产版本
+  - `pnpm start` - 启动生产服务
+
+- 环境变量：参考 `env.example`，使用 `PORT` 控制服务端口。
+
+- 语音识别：已实现服务端代理方案，前端调用 `/api/asr/baidu`。
+
+## 文件管理规则
+
+- **禁止创建 .md 文档**：工作区不保留 Markdown 文档，所有文档内容应在代码注释或规则文件中。
+
+- **禁止创建 .sh 脚本**：不保留 shell 脚本文件。
+
+- 配置和规则统一在 `.cursor/rules/` 目录下的 `.mdc` 文件中管理。
+
+## 何时不遵循本规则
+
+- 用户在会话中显式指定与本规则冲突的临时要求时，可在该次回答内临时覆盖，但需最小化影响，并在结尾注明"按用户临时要求执行"。

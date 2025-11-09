@@ -24,7 +24,37 @@ function calculateSimilarity(input: string, keywords: string[]): number {
 }
 
 /**
- * 根据用户输入匹配最佳答案
+ * 精确匹配问题（用于推荐问题点击）
+ * 通过 question 字段完全匹配，不依赖关键词
+ */
+export function findExactAnswer(questionText: string): QAResult | null {
+  if (!questionText || questionText.trim().length === 0) {
+    return null;
+  }
+
+  const normalizedInput = questionText.trim();
+
+  // 遍历所有分类和问题，精确匹配 question 字段
+  for (const category of qaDatabase.categories) {
+    for (const qa of category.questions) {
+      // 完全匹配或去除标点符号后匹配（更宽松的精确匹配）
+      const normalizedQuestion = qa.question.trim();
+      if (normalizedInput === normalizedQuestion || 
+          normalizedInput.replace(/[，。？！、；：]/g, '') === normalizedQuestion.replace(/[，。？！、；：]/g, '')) {
+        return {
+          question: qa.question,
+          answer: qa.answer,
+          confidence: 1.0, // 精确匹配，置信度为1.0
+        };
+      }
+    }
+  }
+
+  return null;
+}
+
+/**
+ * 根据用户输入匹配最佳答案（关键词匹配，用于降级方案）
  */
 export function findBestAnswer(userInput: string): QAResult | null {
   if (!userInput || userInput.trim().length === 0) {
@@ -132,17 +162,58 @@ export async function getAIResponse(userInput: string): Promise<string> {
 }
 
 /**
+ * 节流函数，限制函数调用频率
+ */
+function throttle<T extends (...args: any[]) => void>(
+  func: T,
+  delay: number
+): (...args: Parameters<T>) => void {
+  let lastCall = 0;
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  let pendingArgs: Parameters<T> | null = null;
+
+  return function throttled(...args: Parameters<T>) {
+    const now = Date.now();
+    const timeSinceLastCall = now - lastCall;
+
+    if (timeSinceLastCall >= delay) {
+      lastCall = now;
+      func(...args);
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+        timeoutId = null;
+      }
+      pendingArgs = null;
+    } else {
+      pendingArgs = args;
+      if (!timeoutId) {
+        timeoutId = setTimeout(() => {
+          if (pendingArgs) {
+            lastCall = Date.now();
+            func(...pendingArgs);
+            timeoutId = null;
+            pendingArgs = null;
+          }
+        }, delay - timeSinceLastCall);
+      }
+    }
+  };
+}
+
+/**
  * 调用 Langcore AI 接口（流式响应）
  * @param userInput 用户输入
  * @param onChunk 收到数据块时的回调
  * @param onComplete 完成时的回调
  * @param onError 错误时的回调
+ * @param enableTypingEffect 是否启用打字机效果（默认 false，避免页面抖动）
  */
 export async function getAIResponseStream(
   userInput: string,
   onChunk: (text: string) => void,
   onComplete: () => void,
-  onError: (error: Error) => void
+  onError: (error: Error) => void,
+  enableTypingEffect: boolean = false
 ): Promise<void> {
   try {
     const response = await fetch(AI_CONFIG.url, {
@@ -176,6 +247,9 @@ export async function getAIResponseStream(
     const decoder = new TextDecoder();
     let buffer = '';
     let hasReceivedContent = false;
+
+    // 使用节流来限制更新频率，避免页面抖动（每100ms最多更新一次）
+    const throttledOnChunk = throttle(onChunk, 100);
 
     while (true) {
       const { done, value } = await reader.read();
@@ -220,15 +294,23 @@ export async function getAIResponseStream(
             if (fullResponse && !hasReceivedContent) {
               hasReceivedContent = true;
               
-              // 模拟打字机效果：逐字显示
-              const chars = fullResponse.split('');
-              let currentText = '';
-              
-              for (const char of chars) {
-                currentText += char;
-                onChunk(currentText);
-                // 添加小延迟以模拟打字效果
-                await new Promise(resolve => setTimeout(resolve, 20));
+              if (enableTypingEffect) {
+                // 启用打字机效果：逐字显示（使用节流优化）
+                const chars = fullResponse.split('');
+                let currentText = '';
+                
+                for (const char of chars) {
+                  currentText += char;
+                  throttledOnChunk(currentText);
+                  // 添加小延迟以模拟打字效果
+                  await new Promise(resolve => setTimeout(resolve, 20));
+                }
+                
+                // 确保最后完整内容被显示
+                onChunk(fullResponse);
+              } else {
+                // 直接显示完整内容，避免页面抖动
+                onChunk(fullResponse);
               }
               
               onComplete();

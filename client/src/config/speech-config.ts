@@ -18,13 +18,13 @@ export const BAIDU_SPEECH_CONFIG = {
    * 百度语音 API Key
    * 从百度AI开放平台获取
    */
-  apiKey: 'qd0McICaid9CsjM0xQGqK7F5',
+  apiKey: '87nNlKH0xziFR1BAzx2REOT5',
   
   /**
    * 百度语音 Secret Key
    * 从百度AI开放平台获取
    */
-  secretKey: 't2C9HgCsUR7Gh6OPpEKizMfwJqhmzYoH',
+  secretKey: '0H2nhQZbMaiTPz3oe9w1GLFdzOOXTLxu',
   
   /**
    * 语音识别配置

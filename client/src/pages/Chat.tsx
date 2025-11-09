@@ -5,9 +5,11 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import ChatMessage, { Message } from '@/components/ChatMessage';
 import Live2DModel from '@/components/Live2DModel';
 import { 
-  findBestAnswer, 
+  findBestAnswer,
+  findExactAnswer,
   getQuickQuestions,
   getContactInfo,
+  getFallbackResponse,
   getAIResponseStream,
 } from '@/lib/qa-matcher';
 import { getSmartRecommendations, Recommendation } from '@/lib/smart-recommendations';
@@ -29,6 +31,7 @@ export default function Chat() {
   const [showMessages, setShowMessages] = useState(false);
   const [selectedCharacter, setSelectedCharacter] = useState<Character>(getDefaultCharacter());
   const [smartRecommendations, setSmartRecommendations] = useState<Recommendation[]>([]);
+  const [touchStartTime, setTouchStartTime] = useState<number>(0);
 
   const hexToRgba = (hex: string, alpha: number) => {
     const sanitized = hex.replace('#', '');
@@ -45,6 +48,7 @@ export default function Chat() {
   const scrollViewportRef = useRef<HTMLDivElement>(null);
   const speechRecognizerRef = useRef<SpeechRecognizer | null>(null);
   const speechSynthesizerRef = useRef<SpeechSynthesizer | null>(null);
+  const lastTriggerTimeRef = useRef<number>(0);
 
   // 初始化
   useEffect(() => {
@@ -73,21 +77,38 @@ export default function Chat() {
     }
   }, [selectedCharacter]);
 
-  // 自动滚动到底部
+  // 自动滚动到底部（使用节流优化，避免频繁滚动导致抖动）
   useEffect(() => {
     if (scrollViewportRef.current && showMessages) {
-      setTimeout(() => {
-        const scrollElement = scrollViewportRef.current?.closest('[data-radix-scroll-area-viewport]') as HTMLElement;
-        if (scrollElement) {
-          scrollElement.scrollTop = scrollElement.scrollHeight;
-        }
-      }, 0);
+      // 使用 requestAnimationFrame 优化滚动性能
+      const scrollTimeout = setTimeout(() => {
+        requestAnimationFrame(() => {
+          const scrollElement = scrollViewportRef.current?.closest('[data-radix-scroll-area-viewport]') as HTMLElement;
+          if (scrollElement) {
+            scrollElement.scrollTop = scrollElement.scrollHeight;
+          }
+        });
+      }, 50); // 延迟50ms，避免过于频繁的滚动
+      
+      return () => clearTimeout(scrollTimeout);
     }
   }, [messages, showMessages]);
 
-  // 处理发送消息（支持 AI 流式响应和本地匹配）
+  // 停止当前语音播放
+  const stopCurrentSpeech = () => {
+    if (speechSynthesizerRef.current) {
+      speechSynthesizerRef.current.stop();
+      setIsSpeaking(false);
+    }
+  };
+
+  // 处理发送消息
+  // @param text 用户输入的问题
   const handleSendMessage = (text: string) => {
     if (!text.trim()) return;
+
+    // 开始新的对话前，先停止当前正在播放的语音
+    stopCurrentSpeech();
 
     // 添加用户消息
     const userMessage: Message = {
@@ -103,13 +124,52 @@ export default function Chat() {
     // 设置思考状态
     setIsThinking(true);
 
-    // 如果 AI 功能未启用，使用本地关键词匹配
-    if (!AI_CONFIG.enabled) {
+    // 无论来源如何，先尝试精确匹配数据库中的标准问题
+    // 这样可以保证：点击推荐问题和手动输入相同问题时，答案一致
+    const exactMatch = findExactAnswer(text);
+    
+    if (exactMatch) {
+      // 精确匹配到数据库中的问题，直接返回答案，不走后端
       setTimeout(() => {
-        const result = findBestAnswer(text);
         const assistantMessage: Message = {
           id: (Date.now() + 1).toString(),
-          content: result?.answer || '抱歉，我没有找到相关答案。请拨打我们的服务热线：4006139090',
+          content: exactMatch.answer,
+          type: 'bot',
+          timestamp: new Date(),
+        };
+
+        setMessages((prev) => [...prev, assistantMessage]);
+        setIsThinking(false);
+
+        // 获取智能推荐
+        const recommendations = getSmartRecommendations(
+          text,
+          assistantMessage.content,
+          messages.map((m) => m.content)
+        );
+        setSmartRecommendations(recommendations);
+
+        // 语音播报
+        if (voiceEnabled && speechSynthesizerRef.current) {
+          setIsSpeaking(true);
+          speechSynthesizerRef.current.speak(assistantMessage.content, {
+            onEnd: () => {
+              setIsSpeaking(false);
+            },
+          });
+        }
+      }, 300); // 本地匹配响应更快，减少延迟
+      return;
+    }
+
+    // 精确匹配失败，走 AI 后端处理个性化问题
+
+    // 本地未匹配到，且 AI 功能未启用，返回兜底回复
+    if (!AI_CONFIG.enabled) {
+      setTimeout(() => {
+        const assistantMessage: Message = {
+          id: (Date.now() + 1).toString(),
+          content: getFallbackResponse(),
           type: 'bot',
           timestamp: new Date(),
         };
@@ -138,7 +198,7 @@ export default function Chat() {
       return;
     }
 
-    // 使用 AI 流式响应
+    // 本地未匹配到，且 AI 功能已启用，调用后端 AI
     // 创建一个空的助手消息，用于流式更新
     const assistantMessageId = (Date.now() + 1).toString();
     const assistantMessage: Message = {
@@ -154,7 +214,7 @@ export default function Chat() {
     // 用于累积完整回复内容（用于智能推荐和语音播报）
     let fullResponse = '';
 
-    // 调用 AI 流式接口
+    // 调用 AI 流式接口（默认不启用打字机效果，避免页面抖动）
     getAIResponseStream(
       text,
       // 收到数据块时的回调（chunk 是累积的完整文本）
@@ -163,7 +223,7 @@ export default function Chat() {
         setIsSpeaking(true);
         fullResponse = chunk; // 直接使用传入的完整文本
         
-        // 更新消息内容
+        // 更新消息内容（使用函数式更新，避免依赖 messages）
         setMessages((prev) => 
           prev.map((msg) => 
             msg.id === assistantMessageId 
@@ -200,7 +260,30 @@ export default function Chat() {
         setIsThinking(false);
         setIsSpeaking(false);
         console.error('AI 响应错误:', error);
-        toast.error('AI 服务暂时不可用，已切换到本地问答模式');
+        
+        // AI 失败时，再次尝试本地匹配作为降级方案
+        const fallbackMatch = findBestAnswer(text);
+        if (fallbackMatch) {
+          const fallbackMessage: Message = {
+            id: (Date.now() + 2).toString(),
+            content: fallbackMatch.answer,
+            type: 'bot',
+            timestamp: new Date(),
+          };
+          setMessages((prev) => [...prev, fallbackMessage]);
+          
+          // 语音播报
+          if (voiceEnabled && speechSynthesizerRef.current) {
+            setIsSpeaking(true);
+            speechSynthesizerRef.current.speak(fallbackMessage.content, {
+              onEnd: () => {
+                setIsSpeaking(false);
+              },
+            });
+          }
+        } else {
+          toast.error('AI 服务暂时不可用');
+        }
       }
     );
   };
@@ -212,8 +295,20 @@ export default function Chat() {
 
   // 开始语音识别
   const handleStartListening = () => {
+    // 防止重复启动
+    if (isListening) {
+      console.warn('⚠️ 语音识别已在进行中，忽略重复启动请求');
+      return;
+    }
+
     if (!speechRecognizerRef.current) {
       toast.error('您的浏览器不支持语音识别');
+      return;
+    }
+
+    // 检查识别器是否已在监听
+    if (speechRecognizerRef.current.getIsListening()) {
+      console.warn('⚠️ 语音识别器已启动，忽略重复启动请求');
       return;
     }
 
@@ -236,9 +331,53 @@ export default function Chat() {
     setIsListening(false);
   };
 
+  // 统一的语音按钮处理函数
+  const handleVoiceButton = () => {
+    const now = Date.now();
+    // 防止短时间内重复触发（防抖，300ms）
+    if (now - lastTriggerTimeRef.current < 300) {
+      console.warn('⚠️ 操作过于频繁，忽略本次请求');
+      return;
+    }
+    lastTriggerTimeRef.current = now;
+    
+    if (isListening) {
+      handleStopListening();
+    } else {
+      handleStartListening();
+    }
+  };
+
+  // 处理触摸开始事件（移动端）
+  const handleTouchStart = (e: React.TouchEvent) => {
+    // 记录触摸时间，用于防止与点击事件重复触发
+    setTouchStartTime(Date.now());
+    handleVoiceButton();
+  };
+
+  // 处理点击事件（PC端和移动端备用）
+  const handleClick = (e: React.MouseEvent) => {
+    // 如果触摸事件刚刚触发过（300ms内），忽略点击事件，避免重复触发
+    // 移动端通常会先触发 touchstart，然后触发 click，所以需要忽略后续的 click
+    if (Date.now() - touchStartTime < 300) {
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+    
+    handleVoiceButton();
+  };
+
   // 切换语音播报
   const toggleVoice = () => {
-    setVoiceEnabled(!voiceEnabled);
+    const newVoiceEnabled = !voiceEnabled;
+    setVoiceEnabled(newVoiceEnabled);
+    
+    // 如果正在关闭语音且当前正在播放，停止播放
+    if (!newVoiceEnabled && isSpeaking && speechSynthesizerRef.current) {
+      speechSynthesizerRef.current.stop();
+      setIsSpeaking(false);
+    }
   };
 
   // 切换消息显示
@@ -248,6 +387,9 @@ export default function Chat() {
 
   // 切换人物
   const handleSwitchCharacter = () => {
+    // 切换顾问时，先停止当前正在播放的语音
+    stopCurrentSpeech();
+    
     const currentIndex = characters.findIndex(c => c.id === selectedCharacter.id);
     const nextIndex = (currentIndex + 1) % characters.length;
     setSelectedCharacter(characters[nextIndex]);
@@ -425,9 +567,8 @@ export default function Chat() {
           <Button
             variant="ghost"
             size="icon"
-            onClick={
-              isListening ? handleStopListening : handleStartListening
-            }
+            onTouchStart={handleTouchStart}
+            onClick={handleClick}
             className={`rounded-full ${isListening ? 'bg-red-100 text-red-600' : ''}`}
           >
             <Mic className="w-5 h-5" />
