@@ -153,6 +153,7 @@ export default function Chat() {
         if (voiceEnabled && speechSynthesizerRef.current) {
           setIsSpeaking(true);
           speechSynthesizerRef.current.speak(assistantMessage.content, {
+            characterId: selectedCharacter.id,
             onEnd: () => {
               setIsSpeaking(false);
             },
@@ -189,6 +190,7 @@ export default function Chat() {
         if (voiceEnabled && speechSynthesizerRef.current) {
           setIsSpeaking(true);
           speechSynthesizerRef.current.speak(assistantMessage.content, {
+            characterId: selectedCharacter.id,
             onEnd: () => {
               setIsSpeaking(false);
             },
@@ -217,6 +219,7 @@ export default function Chat() {
     // 调用 AI 流式接口（默认不启用打字机效果，避免页面抖动）
     getAIResponseStream(
       text,
+      selectedCharacter.id, // 传递角色ID，用于设置角色提示
       // 收到数据块时的回调（chunk 是累积的完整文本）
       (chunk: string) => {
         setIsThinking(false);
@@ -249,6 +252,7 @@ export default function Chat() {
         if (voiceEnabled && speechSynthesizerRef.current && fullResponse) {
           setIsSpeaking(true);
           speechSynthesizerRef.current.speak(fullResponse, {
+            characterId: selectedCharacter.id,
             onEnd: () => {
               setIsSpeaking(false);
             },
@@ -276,6 +280,7 @@ export default function Chat() {
           if (voiceEnabled && speechSynthesizerRef.current) {
             setIsSpeaking(true);
             speechSynthesizerRef.current.speak(fallbackMessage.content, {
+              characterId: selectedCharacter.id,
               onEnd: () => {
                 setIsSpeaking(false);
               },
@@ -458,12 +463,12 @@ export default function Chat() {
                 <DotLottieReact
                   src={
                     isSpeaking
-                      ? "/2.json"  // AI说话状态
+                      ? selectedCharacter.animations.speaking
                       : isThinking
-                      ? "/Spin.json"              // 思考状态
+                      ? selectedCharacter.animations.thinking
                       : isListening
-                      ? "/Meditating Tiger.json"  // 聆听状态
-                      : "/Meditating Tiger.json"  // 默认状态
+                      ? selectedCharacter.animations.listening
+                      : selectedCharacter.animations.idle
                   }
                   loop
                   autoplay

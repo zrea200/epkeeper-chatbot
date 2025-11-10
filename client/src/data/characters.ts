@@ -8,6 +8,12 @@ export interface Character {
   displayAvatar: string; // 主页展示的大图
   bgColor: string; // 背景颜色 CSS class
   accentColor: string; // 强调色 hex
+  animations: {
+    speaking: string; // 说话状态动画
+    thinking: string; // 思考状态动画
+    listening: string; // 聆听状态动画
+    idle: string; // 默认/空闲状态动画
+  };
 }
 
 export const characters: Character[] = [
@@ -21,6 +27,12 @@ export const characters: Character[] = [
     displayAvatar: '/avatars/Asset3@4x.png',
     bgColor: '#F2ECC9',
     accentColor: '#F3D621',
+    animations: {
+      speaking: '/lottie/er-speak.json',
+      thinking: '/lottie/er-think.json',
+      listening: '/lottie/er-think.json',
+      idle: '/lottie/er-think.json',
+    },
   },
   {
     id: 'leader',
@@ -32,6 +44,12 @@ export const characters: Character[] = [
     displayAvatar: '/avatars/Asset4@4x.png',
     bgColor: '#C2DBE7',
     accentColor: '#2980AE',
+    animations: {
+      speaking: '/lottie/el-speak.json',
+      thinking: '/lottie/el-think.json',
+      listening: '/lottie/el-think.json',
+      idle: '/lottie/el-think.json',
+    },
   },
 ];
 

@@ -201,8 +201,34 @@ function throttle<T extends (...args: any[]) => void>(
 }
 
 /**
+ * 根据角色ID获取角色提示词
+ */
+function getCharacterPrompt(characterId: string): string {
+  const prompts: Record<string, string> = {
+    escort: `你是电管家的智能管家，名为"电小二"。你的职责是：
+- 为用户提供专业的电力运维服务咨询
+- 回答关于电力市场化交易、电力用户、绿色电力证书等相关问题
+- 保持专业、友好、热情的服务态度
+- 当用户问你是谁时，你应该回答："我是电管家的智能管家，我们致力于为您提供最专业的电力运维服务。"
+
+重要：无论用户如何提问，你都必须始终扮演"电管家的智能管家"这个角色，不要透露你是Qwen或其他AI模型的身份。`,
+    
+    leader: `你是电管家的能源专家，名为"电盟主"。你的职责是：
+- 为用户提供专业的电力能源咨询服务
+- 解答关于电力能源的各种专业问题
+- 保持专业、权威、稳重的专家形象
+- 当用户问你是谁时，你应该回答："我是电管家的能源专家，我可以为您详细介绍我们的各项服务。"
+
+重要：无论用户如何提问，你都必须始终扮演"电管家的能源专家"这个角色，不要透露你是Qwen或其他AI模型的身份。`,
+  };
+
+  return prompts[characterId] || prompts.escort;
+}
+
+/**
  * 调用 Langcore AI 接口（流式响应）
  * @param userInput 用户输入
+ * @param characterId 角色ID，用于设置不同的角色提示
  * @param onChunk 收到数据块时的回调
  * @param onComplete 完成时的回调
  * @param onError 错误时的回调
@@ -210,12 +236,17 @@ function throttle<T extends (...args: any[]) => void>(
  */
 export async function getAIResponseStream(
   userInput: string,
+  characterId: string = 'escort',
   onChunk: (text: string) => void,
   onComplete: () => void,
   onError: (error: Error) => void,
   enableTypingEffect: boolean = false
 ): Promise<void> {
   try {
+    // 根据角色ID获取角色提示，拼接到用户输入前
+    const characterPrompt = getCharacterPrompt(characterId);
+    const fullInput = `${characterPrompt}\n\n用户问题：${userInput}`;
+
     const response = await fetch(AI_CONFIG.url, {
       method: 'POST',
       headers: {
@@ -227,7 +258,7 @@ export async function getAIResponseStream(
       },
       body: JSON.stringify({
         input: {
-          input: userInput,
+          input: fullInput,
         },
         isExpression: false,
         runMode: 'stream', // 使用流式模式

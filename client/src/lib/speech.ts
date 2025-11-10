@@ -1,13 +1,18 @@
 /**
  * 语音识别和语音合成工具
- * 支持百度语音服务（推荐，微信内可用）和浏览器原生 Web Speech API
+ * 支持讯飞语音服务（优先）、百度语音服务和浏览器原生 Web Speech API
  */
 
 import BAIDU_SPEECH_CONFIG from '@/config/speech-config';
+import XUNFEI_SPEECH_CONFIG from '@/config/xunfei-speech-config';
 import { 
   BaiduSpeechRecognizer, 
   BaiduSpeechSynthesizer 
 } from './baidu-speech';
+import {
+  XunfeiSpeechRecognizer,
+  XunfeiSpeechSynthesizer
+} from './xunfei-speech';
 
 // 检查浏览器是否支持语音识别
 export function isSpeechRecognitionSupported(): boolean {
@@ -51,29 +56,57 @@ function isMobileBrowser(): boolean {
 }
 
 /**
- * 语音识别类（自动选择百度API或浏览器原生API）
+ * 语音识别类（自动选择讯飞API、百度API或浏览器原生API）
  */
 export class SpeechRecognizer {
   private recognizer: any;
+  private useXunfei: boolean;
   private useBaidu: boolean;
 
   constructor() {
     const isWeChat = isWeChatBrowser();
     const isMobile = isMobileBrowser();
+    const xunfeiEnabled = XUNFEI_SPEECH_CONFIG.enabled;
     const baiduEnabled = BAIDU_SPEECH_CONFIG.enabled;
     
-    // 优先使用百度语音服务（配置启用 且 在微信内或移动端浏览器）
-    this.useBaidu = baiduEnabled && (isWeChat || isMobile);
+    // 优先使用讯飞语音服务（配置启用）
+    // 其次使用百度语音服务（配置启用 且 在微信内或移动端浏览器）
+    this.useXunfei = xunfeiEnabled;
+    this.useBaidu = !xunfeiEnabled && baiduEnabled && (isWeChat || isMobile);
     
     console.log('🎤 语音识别初始化:', {
       isWeChat: isWeChat,
       isMobile: isMobile,
+      xunfeiEnabled: xunfeiEnabled,
       baiduEnabled: baiduEnabled,
+      useXunfei: this.useXunfei,
       useBaidu: this.useBaidu,
       speechRecognitionSupported: isSpeechRecognitionSupported()
     });
     
-    if (this.useBaidu) {
+    if (this.useXunfei) {
+      try {
+        console.log('🎤 使用讯飞语音识别服务');
+        this.recognizer = new XunfeiSpeechRecognizer();
+      } catch (error) {
+        console.error('❌ 初始化讯飞语音识别失败，尝试回退到百度API:', error);
+        this.useXunfei = false;
+        // 尝试回退到百度API
+        if (baiduEnabled && (isWeChat || isMobile)) {
+          try {
+            console.log('🎤 回退到百度语音识别服务');
+            this.useBaidu = true;
+            this.recognizer = new BaiduSpeechRecognizer();
+          } catch (baiduError) {
+            console.error('❌ 初始化百度语音识别也失败，回退到浏览器原生API:', baiduError);
+            this.useBaidu = false;
+            this.initBrowserRecognition();
+          }
+        } else {
+          this.initBrowserRecognition();
+        }
+      }
+    } else if (this.useBaidu) {
       try {
         console.log('🎤 使用百度语音识别服务');
         this.recognizer = new BaiduSpeechRecognizer();
@@ -113,7 +146,7 @@ export class SpeechRecognizer {
    * 开始语音识别
    */
   start(onResult: (text: string) => void, onError?: (error: string) => void) {
-    if (this.useBaidu) {
+    if (this.useXunfei || this.useBaidu) {
       this.recognizer.start(onResult, onError);
     } else {
       if (this.recognizer.isListening) {
@@ -157,32 +190,75 @@ export class SpeechRecognizer {
 }
 
 /**
- * 语音合成类（自动选择百度API或浏览器原生API）
+ * 语音合成类（自动选择讯飞API、百度API或浏览器原生API）
  */
 export class SpeechSynthesizer {
   private synthesizer: any;
+  private useXunfei: boolean;
   private useBaidu: boolean;
 
   constructor() {
     const isWeChat = isWeChatBrowser();
     const isMobile = isMobileBrowser();
+    const xunfeiEnabled = XUNFEI_SPEECH_CONFIG.enabled;
     const baiduEnabled = BAIDU_SPEECH_CONFIG.enabled;
     const browserSupported = isSpeechSynthesisSupported();
     
-    // 优先使用百度语音服务（配置启用 且 在微信内或移动端浏览器）
-    // 在微信环境和移动端浏览器中优先使用百度服务
+    // 优先使用讯飞语音服务（配置启用）
+    // 其次使用百度语音服务（配置启用 且 在微信内或移动端浏览器）
     // 如果浏览器不支持原生API，且百度服务已启用，也尝试使用百度服务
-    this.useBaidu = (baiduEnabled && (isWeChat || isMobile)) || (baiduEnabled && !browserSupported);
+    this.useXunfei = xunfeiEnabled;
+    this.useBaidu = !xunfeiEnabled && ((baiduEnabled && (isWeChat || isMobile)) || (baiduEnabled && !browserSupported));
     
     console.log('🔊 语音合成初始化:', {
       isWeChat: isWeChat,
       isMobile: isMobile,
+      xunfeiEnabled: xunfeiEnabled,
       baiduEnabled: baiduEnabled,
       browserSupported: browserSupported,
+      useXunfei: this.useXunfei,
       useBaidu: this.useBaidu
     });
     
-    if (this.useBaidu) {
+    if (this.useXunfei) {
+      try {
+        console.log('🔊 使用讯飞语音合成服务');
+        this.synthesizer = new XunfeiSpeechSynthesizer();
+      } catch (error) {
+        console.error('❌ 初始化讯飞语音合成失败，尝试回退到百度API:', error);
+        this.useXunfei = false;
+        // 尝试回退到百度API
+        if (baiduEnabled && ((isWeChat || isMobile) || !browserSupported)) {
+          try {
+            console.log('🔊 回退到百度语音合成服务');
+            this.useBaidu = true;
+            this.synthesizer = new BaiduSpeechSynthesizer();
+          } catch (baiduError) {
+            console.error('❌ 初始化百度语音合成也失败:', baiduError);
+            // 如果百度服务初始化失败，尝试回退到浏览器原生API
+            if (browserSupported) {
+              console.warn('⚠️ 回退到浏览器原生语音合成');
+              this.useBaidu = false;
+              this.initBrowserSynthesis();
+            } else {
+              // 浏览器不支持且服务都失败，抛出详细错误
+              throw new Error(
+                `语音合成服务初始化失败。${isWeChat ? '您在微信环境中，' : ''}请检查语音服务配置是否正确。` +
+                `错误详情: ${error instanceof Error ? error.message : String(error)}`
+              );
+            }
+          }
+        } else if (browserSupported) {
+          console.warn('⚠️ 回退到浏览器原生语音合成');
+          this.initBrowserSynthesis();
+        } else {
+          throw new Error(
+            `语音合成服务初始化失败。请检查讯飞或百度语音服务配置是否正确。` +
+            `错误详情: ${error instanceof Error ? error.message : String(error)}`
+          );
+        }
+      }
+    } else if (this.useBaidu) {
       try {
         console.log('🔊 使用百度语音合成服务');
         this.synthesizer = new BaiduSpeechSynthesizer();
@@ -235,9 +311,10 @@ export class SpeechSynthesizer {
   }
 
   /**
-   * 播报文本
+   * 播报文本（支持角色音色）
    */
   speak(text: string, options?: {
+    characterId?: string; // 角色ID，用于选择音色（仅讯飞API支持）
     lang?: string;
     rate?: number;
     pitch?: number;
@@ -245,8 +322,19 @@ export class SpeechSynthesizer {
     onEnd?: () => void;
     onError?: (error: any) => void;
   }) {
-    if (this.useBaidu) {
-      this.synthesizer.speak(text, options);
+    if (this.useXunfei) {
+      // 讯飞API支持角色音色
+      this.synthesizer.speak(text, {
+        characterId: options?.characterId,
+        onEnd: options?.onEnd,
+        onError: options?.onError,
+      });
+    } else if (this.useBaidu) {
+      // 百度API不支持角色音色，使用默认配置
+      this.synthesizer.speak(text, {
+        onEnd: options?.onEnd,
+        onError: options?.onError,
+      });
     } else {
       // 停止当前播报
       this.stop();
@@ -277,7 +365,7 @@ export class SpeechSynthesizer {
    * 停止播报
    */
   stop() {
-    if (this.useBaidu) {
+    if (this.useXunfei || this.useBaidu) {
       this.synthesizer?.stop();
     } else {
       this.synthesizer?.cancel();
@@ -313,7 +401,7 @@ export class SpeechSynthesizer {
    * 获取可用的语音列表（仅浏览器原生API）
    */
   getVoices(): SpeechSynthesisVoice[] {
-    if (!this.useBaidu && this.synthesizer) {
+    if (!this.useXunfei && !this.useBaidu && this.synthesizer) {
       return this.synthesizer.getVoices();
     }
     return [];

@@ -3,12 +3,15 @@ import { createServer } from "http";
 import path from "path";
 import { fileURLToPath } from "url";
 import { createBaiduSpeechAPIFromEnv, BaiduSpeechAPI } from "./baidu-speech-api.js";
+import { createXunfeiSpeechAPIFromEnv, XunfeiSpeechAPI } from "./xunfei-speech-api.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // 创建百度语音API实例（单例）
 let baiduSpeechAPI: BaiduSpeechAPI | null = null;
+// 创建讯飞语音API实例（单例）
+let xunfeiSpeechAPI: XunfeiSpeechAPI | null = null;
 
 function getBaiduSpeechAPI(): BaiduSpeechAPI {
   if (!baiduSpeechAPI) {
@@ -20,6 +23,18 @@ function getBaiduSpeechAPI(): BaiduSpeechAPI {
     }
   }
   return baiduSpeechAPI;
+}
+
+function getXunfeiSpeechAPI(): XunfeiSpeechAPI {
+  if (!xunfeiSpeechAPI) {
+    try {
+      xunfeiSpeechAPI = createXunfeiSpeechAPIFromEnv();
+    } catch (error: any) {
+      console.error("初始化讯飞语音API失败:", error.message);
+      throw error;
+    }
+  }
+  return xunfeiSpeechAPI;
 }
 
 async function startServer() {
@@ -223,6 +238,131 @@ async function startServer() {
       res.send(audioBuffer);
     } catch (err: any) {
       console.error("语音合成失败:", err);
+      res.status(502).json({
+        error: "tts_failed",
+        error_description: err?.message || "合成调用失败",
+      });
+    }
+  });
+
+  // 讯飞语音识别接口（ASR）
+  app.post("/api/asr/xunfei", async (req, res) => {
+    const startTime = Date.now();
+    console.log(`[ASR-Xunfei] 收到语音识别请求: ${req.method} ${req.path}`, {
+      hasBody: !!req.body,
+      bodyKeys: req.body ? Object.keys(req.body) : [],
+      contentType: req.headers['content-type'],
+    });
+
+    try {
+      const { base64, format = "wav", rate = 16000 } = req.body || {};
+      
+      if (!base64) {
+        console.error("[ASR-Xunfei] 缺少音频数据");
+        res.status(400).json({ error: "missing_audio", error_description: "缺少音频 base64" });
+        return;
+      }
+
+      // 检查API配置：优先使用环境变量，如果没有则使用配置文件中的值（开发用）
+      const appId = process.env.XUNFEI_APP_ID || "54c865b6";
+      const apiKey = process.env.XUNFEI_API_KEY || "1e71234d7970325c2adf493bced1dc26";
+      const apiSecret = process.env.XUNFEI_API_SECRET || "NDAxMDgxZjlhZWY4NGY0ZGIyNWY5YTVi";
+      
+      if (!appId || !apiKey || !apiSecret) {
+        console.error("[ASR-Xunfei] 缺少 API 配置");
+        res.status(400).json({ error: "missing_config", error_description: "缺少讯飞 API 配置（AppID、APIKey、APISecret）" });
+        return;
+      }
+
+      // 如果实例不存在或配置变化，重新创建
+      if (!xunfeiSpeechAPI) {
+        xunfeiSpeechAPI = new XunfeiSpeechAPI({
+          appId,
+          apiKey,
+          apiSecret,
+        });
+      }
+
+      // 解析 base64 音频数据
+      const base64Data = base64.replace(/^data:[^,]*,/, "");
+      const audioBuffer = Buffer.from(base64Data, "base64");
+
+      // 调用语音识别API
+      console.log(`[ASR-Xunfei] 开始调用讯飞API，音频大小: ${audioBuffer.length} bytes`);
+      const text = await xunfeiSpeechAPI.speechToText(
+        audioBuffer,
+        format as "wav" | "pcm",
+        rate
+      );
+
+      const duration = Date.now() - startTime;
+      console.log(`[ASR-Xunfei] 识别成功，耗时: ${duration}ms，结果: ${text.substring(0, 50)}`);
+      res.json({ text, success: true });
+    } catch (err: any) {
+      const duration = Date.now() - startTime;
+      console.error(`[ASR-Xunfei] 语音识别失败，耗时: ${duration}ms`, {
+        error: err?.message,
+        stack: err?.stack?.substring(0, 200),
+        name: err?.name
+      });
+      res.status(502).json({
+        error: "asr_failed",
+        error_description: err?.message || "识别调用失败",
+      });
+    }
+  });
+
+  // 讯飞语音合成接口（TTS）
+  app.post("/api/tts/xunfei", async (req, res) => {
+    try {
+      const { text, vcn, speed, pitch, volume, aue } = req.body || {};
+      if (!text || typeof text !== "string") {
+        res.status(400).json({ error: "missing_text", error_description: "缺少文本内容" });
+        return;
+      }
+
+      // 检查API配置：优先使用环境变量，如果没有则使用配置文件中的值（开发用）
+      const appId = process.env.XUNFEI_APP_ID || "54c865b6";
+      const apiKey = process.env.XUNFEI_API_KEY || "1e71234d7970325c2adf493bced1dc26";
+      const apiSecret = process.env.XUNFEI_API_SECRET || "NDAxMDgxZjlhZWY4NGY0ZGIyNWY5YTVi";
+      
+      if (!appId || !apiKey || !apiSecret) {
+        res.status(400).json({ error: "missing_config", error_description: "缺少讯飞 API 配置（AppID、APIKey、APISecret）" });
+        return;
+      }
+
+      // 如果实例不存在或配置变化，重新创建
+      if (!xunfeiSpeechAPI) {
+        xunfeiSpeechAPI = new XunfeiSpeechAPI({
+          appId,
+          apiKey,
+          apiSecret,
+        });
+      }
+
+      // 调用语音合成API
+      const resolvedAue: string = typeof aue === "string" && aue.trim().length > 0 ? aue : "lame";
+      const audioBuffer = await xunfeiSpeechAPI.textToSpeech(text, {
+        vcn: vcn || "xiaoyu", // 默认使用讯飞小宇（男声，基础发音人）
+        speed: speed ?? 50,
+        pitch: pitch ?? 50,
+        volume: volume ?? 50,
+        aue: resolvedAue,
+      });
+
+      // 返回音频数据
+      const contentType =
+        resolvedAue === "lame"
+          ? "audio/mpeg"
+          : resolvedAue === "wav"
+          ? "audio/wav"
+          : "application/octet-stream";
+
+      res.setHeader("Content-Type", contentType);
+      res.setHeader("Content-Length", audioBuffer.length.toString());
+      res.send(audioBuffer);
+    } catch (err: any) {
+      console.error("讯飞语音合成失败:", err);
       res.status(502).json({
         error: "tts_failed",
         error_description: err?.message || "合成调用失败",
