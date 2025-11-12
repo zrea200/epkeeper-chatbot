@@ -1,7 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import ChatMessage, { Message } from '@/components/ChatMessage';
 import Live2DModel from '@/components/Live2DModel';
 import { 
@@ -16,19 +15,19 @@ import { getSmartRecommendations, Recommendation } from '@/lib/smart-recommendat
 import { characters, Character, getDefaultCharacter } from '@/data/characters';
 import { SpeechRecognizer, SpeechSynthesizer } from '@/lib/speech';
 import { toast } from 'sonner';
-import { Volume2, VolumeX, Mic, Send, Eye, EyeOff } from 'lucide-react';
+import { Volume2, VolumeX, Mic, Send } from 'lucide-react';
 import { DotLottieReact } from '@lottiefiles/dotlottie-react';
 import AI_CONFIG from '@/config/ai-config';
 
 export default function Chat() {
   // 状态管理
   const [messages, setMessages] = useState<Message[]>([]);
+  const [visibleMessages, setVisibleMessages] = useState<Message[]>([]); // 可见的消息列表
   const [inputValue, setInputValue] = useState('');
   const [isListening, setIsListening] = useState(false);
   const [isThinking, setIsThinking] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [voiceEnabled, setVoiceEnabled] = useState(true);
-  const [showMessages, setShowMessages] = useState(false);
   const [selectedCharacter, setSelectedCharacter] = useState<Character>(getDefaultCharacter());
   const [smartRecommendations, setSmartRecommendations] = useState<Recommendation[]>([]);
   const [touchStartTime, setTouchStartTime] = useState<number>(0);
@@ -45,7 +44,7 @@ export default function Chat() {
   };
 
   // 引用
-  const scrollViewportRef = useRef<HTMLDivElement>(null);
+  const messageViewportRef = useRef<HTMLDivElement>(null);
   const speechRecognizerRef = useRef<SpeechRecognizer | null>(null);
   const speechSynthesizerRef = useRef<SpeechSynthesizer | null>(null);
   const lastTriggerTimeRef = useRef<number>(0);
@@ -77,22 +76,51 @@ export default function Chat() {
     }
   }, [selectedCharacter]);
 
-  // 自动滚动到底部（使用节流优化，避免频繁滚动导致抖动）
+  // 智能管理可见消息：类似虚拟列表，保持最新的消息可见
   useEffect(() => {
-    if (scrollViewportRef.current && showMessages) {
-      // 使用 requestAnimationFrame 优化滚动性能
-      const scrollTimeout = setTimeout(() => {
-        requestAnimationFrame(() => {
-          const scrollElement = scrollViewportRef.current?.closest('[data-radix-scroll-area-viewport]') as HTMLElement;
-          if (scrollElement) {
-            scrollElement.scrollTop = scrollElement.scrollHeight;
-          }
-        });
-      }, 50); // 延迟50ms，避免过于频繁的滚动
-      
-      return () => clearTimeout(scrollTimeout);
+    // 最多显示最近的 20 条消息（可调整）
+    const MAX_VISIBLE_MESSAGES = 20;
+    
+    if (messages.length <= MAX_VISIBLE_MESSAGES) {
+      setVisibleMessages(messages);
+    } else {
+      // 只保留最新的消息
+      setVisibleMessages(messages.slice(-MAX_VISIBLE_MESSAGES));
     }
-  }, [messages, showMessages]);
+  }, [messages]);
+
+  // 自动滚动到底部
+  useEffect(() => {
+    const scrollToBottom = () => {
+      const viewport = messageViewportRef.current;
+      if (!viewport) return;
+
+      const targetScrollTop = viewport.scrollHeight - viewport.clientHeight;
+
+      requestAnimationFrame(() => {
+        viewport.scrollTop = targetScrollTop < 0 ? 0 : targetScrollTop;
+        console.debug(
+          '[Chat] 自动滚动触发',
+          {
+            messageCount: visibleMessages.length,
+            scrollTop: viewport.scrollTop,
+            scrollHeight: viewport.scrollHeight,
+            clientHeight: viewport.clientHeight,
+          }
+        );
+      });
+    };
+
+    // 使用多次 requestAnimationFrame 确保 DOM 完全更新
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        scrollToBottom();
+        // 再延迟一次确保内容完全渲染
+        setTimeout(scrollToBottom, 100);
+        setTimeout(scrollToBottom, 300);
+      });
+    });
+  }, [visibleMessages, smartRecommendations]);
 
   // 停止当前语音播放
   const stopCurrentSpeech = () => {
@@ -385,11 +413,6 @@ export default function Chat() {
     }
   };
 
-  // 切换消息显示
-  const toggleShowMessages = () => {
-    setShowMessages(!showMessages);
-  };
-
   // 切换人物
   const handleSwitchCharacter = () => {
     // 切换顾问时，先停止当前正在播放的语音
@@ -404,22 +427,41 @@ export default function Chat() {
 
   return (
     <div
-      className="h-screen w-full bg-white flex flex-col overflow-hidden max-w-2xl mx-auto"
+      className="h-screen w-full flex flex-col overflow-hidden max-w-2xl mx-auto relative"
+      style={{
+        background: `linear-gradient(to bottom, ${hexToRgba(selectedCharacter.accentColor, 0.05)}, ${selectedCharacter.bgColor})`,
+      }}
     >
-      {/* 头部 */}
-      <div className="h-16 bg-white border-b border-gray-200 flex items-center justify-between px-4 flex-shrink-0">
-        <div className="flex items-center gap-3">
+      {/* 顶部角色信息 */}
+      <div className="bg-white/80 backdrop-blur-md border-b border-gray-200/50 flex items-center justify-between px-4 py-3 flex-shrink-0 z-20 shadow-sm">
+        <div className="flex items-center gap-3 flex-1 min-w-0">
           <img
             src={selectedCharacter.avatar}
             alt={selectedCharacter.name}
-            className="w-12 h-12 rounded-full flex-shrink-0 object-cover"
+            className="w-12 h-12 rounded-full flex-shrink-0 object-cover border-2"
+            style={{ borderColor: selectedCharacter.accentColor }}
           />
-          <div>
-            <h1 className="text-base font-bold text-gray-900">{selectedCharacter.name}</h1>
-            <p className="text-xs text-gray-500">在线</p>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <h1 className="text-base font-bold text-gray-900">{selectedCharacter.name}</h1>
+              <span className="text-xs text-gray-500">{selectedCharacter.title}</span>
+            </div>
+            <p className="text-xs text-gray-600 mt-0.5 truncate">{selectedCharacter.description}</p>
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-shrink-0">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleSwitchCharacter}
+            className="text-xs h-8 px-3 rounded-lg border-2 font-medium"
+            style={{
+              borderColor: selectedCharacter.accentColor,
+              color: selectedCharacter.accentColor,
+            }}
+          >
+            切换顾问
+          </Button>
           <Button
             variant="ghost"
             size="icon"
@@ -433,116 +475,72 @@ export default function Chat() {
               <VolumeX className="w-5 h-5" />
             )}
           </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={toggleShowMessages}
-            className="rounded-full h-10 w-10"
-            style={{ color: selectedCharacter.accentColor }}
-          >
-            {showMessages ? (
-              <Eye className="w-5 h-5" />
-            ) : (
-              <EyeOff className="w-5 h-5" />
-            )}
-          </Button>
         </div>
       </div>
 
-      {/* 内容区域 */}
-      <div className="flex-1 flex flex-col overflow-hidden">
-        {!showMessages ? (
-          // 默认状态：显示头像和人物信息
-          <div className={`flex-1 flex flex-col items-center justify-center p-6 bg-gradient-to-b ${selectedCharacter.bgColor}`}>
-            <div className="text-center space-y-6 w-full max-w-md mx-auto">
-              {/* Lottie 动画展示 */}
-              <div
-                className="relative w-full aspect-[4/5] rounded-3xl overflow-hidden shadow-2xl border-4 flex items-center justify-center"
-                style={{ borderColor: selectedCharacter.accentColor }}
-              >
-                <DotLottieReact
-                  src={
-                    isSpeaking
-                      ? selectedCharacter.animations.speaking
-                      : isThinking
-                      ? selectedCharacter.animations.thinking
-                      : isListening
-                      ? selectedCharacter.animations.listening
-                      : selectedCharacter.animations.idle
-                  }
-                  loop
-                  autoplay
-                  style={{ width: '100%', height: '100%' }}
-                />
-              </div>
+      {/* 主视觉：人物展示 - Lottie动画占满中间主体 */}
+      <div className="flex-1 relative overflow-hidden m-0 p-0">
+        <DotLottieReact
+          src={
+            isSpeaking
+              ? selectedCharacter.animations.speaking
+              : isThinking
+              ? selectedCharacter.animations.thinking
+              : isListening
+              ? selectedCharacter.animations.listening
+              : selectedCharacter.animations.idle
+          }
+          loop
+          autoplay
+          style={{ width: '100%', height: '100%', display: 'block' }}
+        />
+      </div>
 
-              {/* 人物信息 */}
-              <div>
-                <h2 className="text-2xl font-bold text-gray-900">{selectedCharacter.name}</h2>
-                <p className="text-sm text-gray-600 mt-2">{selectedCharacter.description}</p>
-              </div>
+      {/* 半透明固定消息区域 - 默认显示欢迎语和猜你想问 */}
+      {visibleMessages.length > 0 && (
+        <div className="absolute bottom-24 left-0 right-0 max-h-[45vh] z-30 px-4 pb-2">
+          <div className="bg-transparent rounded-2xl overflow-hidden max-w-2xl mx-auto">
+            <div
+              ref={messageViewportRef}
+              className="max-h-[45vh] overflow-y-auto scroll-smooth [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]"
+            >
+              <div className="p-4 space-y-4 pb-6">
+                {/* 消息列表 - 只显示可见消息 */}
+                {visibleMessages.map((message) => (
+                  <ChatMessage
+                    key={message.id}
+                    message={message}
+                    accentColor={selectedCharacter.accentColor}
+                    accentBgColor={hexToRgba('#FFFFFF', 0.9)}
+                    botAvatarUrl={selectedCharacter.avatar}
+                  />
+                ))}
 
-              {/* 切换顾问按钮 */}
-              <Button
-                onClick={handleSwitchCharacter}
-                variant="outline"
-                className="w-48 h-12 rounded-lg border-2 font-medium hover:bg-gray-50"
-                style={{
-                  borderColor: selectedCharacter.accentColor,
-                  color: selectedCharacter.accentColor,
-                }}
-              >
-                切换顾问
-              </Button>
+                {/* 猜你想问 */}
+                {smartRecommendations.length > 0 && (
+                  <div className="mt-6 pt-4">
+                    <p className="text-sm font-semibold text-gray-800 mb-3 drop-shadow-sm">
+                      {visibleMessages.length <= 1 ? '快捷问题' : '猜你想问'}
+                    </p>
+                    <button
+                      onClick={() => handleRecommendation(smartRecommendations[0].question)}
+                      className="w-full p-3 text-left bg-white/90 backdrop-blur-sm rounded-lg border transition-all text-sm text-gray-700 hover:text-gray-900 hover:opacity-90 shadow-sm"
+                      style={{ 
+                        borderColor: selectedCharacter.accentColor,
+                      }}
+                    >
+                      {smartRecommendations[0].question}
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
-        ) : (
-          // 消息显示状态
-          <ScrollArea className="flex-1 overflow-hidden">
-            <div className="p-4 space-y-4" ref={scrollViewportRef}>
-              {/* 消息列表 */}
-              {messages.map((message) => (
-                <ChatMessage
-                  key={message.id}
-                  message={message}
-                  accentColor={selectedCharacter.accentColor}
-                  accentBgColor={hexToRgba(selectedCharacter.accentColor, 0.1)}
-                  botAvatarUrl={selectedCharacter.avatar}
-                />
-              ))}
+        </div>
+      )}
 
-              {/* 推荐问题区域 */}
-              {smartRecommendations.length > 0 && messages.length > 1 && (
-                <div className="mt-6 pt-4 border-t border-gray-200">
-                  <p className="text-sm font-semibold text-gray-700 mb-3">
-                    {messages.length <= 2 ? '快捷问题' : '猜你想问'}
-                  </p>
-                  <div className="space-y-2">
-                    {smartRecommendations.map((rec, index) => (
-                      <button
-                        key={index}
-                        onClick={() => handleRecommendation(rec.question)}
-                        className={`w-full p-3 text-left bg-gradient-to-r rounded-lg border transition-all text-sm text-gray-700 hover:text-gray-900 hover:opacity-90 ${selectedCharacter.bgColor}`}
-                        style={{ borderColor: selectedCharacter.accentColor }}
-                      >
-                        {rec.question}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          </ScrollArea>
-        )}
-      </div>
-
-      {/* 底部信息 */}
-      <div className="px-4 py-2 text-center text-xs text-gray-500 border-t border-gray-200 flex-shrink-0">
-        电管家集团 · 服务热线: {contactInfo?.phone}
-      </div>
-
-      {/* 输入区域 */}
-      <div className="p-4 bg-white border-t border-gray-200 flex-shrink-0">
+      {/* 底部输入框 */}
+      <div className="p-4 bg-white/80 backdrop-blur-md border-t border-gray-200/50 flex-shrink-0 z-20 shadow-lg">
         <div className="flex gap-2">
           <Input
             placeholder="输入您的问题..."
@@ -567,7 +565,7 @@ export default function Chat() {
                 setIsListening(false);
               }
             }}
-            className="flex-1"
+            className="flex-1 bg-white/50 backdrop-blur-sm border-gray-200"
           />
           <Button
             variant="ghost"
@@ -583,7 +581,7 @@ export default function Chat() {
               setIsListening(false);
               handleSendMessage(inputValue);
             }}
-            className="rounded-full text-white hover:opacity-90"
+            className="rounded-full text-white hover:opacity-90 shadow-md"
             style={{ backgroundColor: selectedCharacter.accentColor }}
           >
             <Send className="w-5 h-5" />

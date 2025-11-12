@@ -34,28 +34,24 @@ export default function ChatMessage({
         isBot ? 'justify-start' : 'justify-end'
       )}
     >
-      {isBot && (
-        <div
-          className="flex-shrink-0 w-8 h-8 rounded-full overflow-hidden flex items-center justify-center bg-white"
-          style={{ borderColor: accentColor, borderWidth: '2px' }}
-        >
-          <img 
-            src={botAvatarUrl} 
-            alt="Bot" 
-            className="w-full h-full object-cover"
-          />
-        </div>
-      )}
-      
       <div
         className={cn(
-          'max-w-[75%] rounded-2xl px-4 py-2.5 break-words border',
+          'max-w-[75%] rounded-2xl px-4 py-2.5 break-words border shadow-sm',
           isBot ? 'text-foreground' : 'text-white'
         )}
         style={
           isBot
-            ? { backgroundColor: accentBgColor, borderColor: accentColor }
-            : { backgroundColor: accentColor as string, borderColor: accentColor }
+            ? { 
+                backgroundColor: accentBgColor || 'rgba(255, 255, 255, 0.9)', 
+                borderColor: accentColor,
+                textShadow: '0 1px 2px rgba(0, 0, 0, 0.1)',
+                backdropFilter: 'blur(8px)',
+              }
+            : { 
+                backgroundColor: accentColor as string, 
+                borderColor: accentColor,
+                boxShadow: '0 2px 8px rgba(0, 0, 0, 0.2)',
+              }
         }
       >
         {isThinking ? (
@@ -75,19 +71,6 @@ export default function ChatMessage({
           })}
         </span>
       </div>
-
-      {!isBot && (
-        <div
-          className="flex-shrink-0 w-8 h-8 rounded-full overflow-hidden flex items-center justify-center bg-white"
-          style={{ borderColor: accentColor, borderWidth: '2px' }}
-        >
-          <img 
-            src={userAvatarUrl} 
-            alt="User" 
-            className="w-full h-full object-cover"
-          />
-        </div>
-      )}
     </div>
   );
 }
