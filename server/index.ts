@@ -2,6 +2,7 @@ import express from "express";
 import { createServer } from "http";
 import path from "path";
 import { fileURLToPath } from "url";
+import { readFileSync } from "fs";
 import { createBaiduSpeechAPIFromEnv, BaiduSpeechAPI } from "./baidu-speech-api.js";
 import { createXunfeiSpeechAPIFromEnv, XunfeiSpeechAPI } from "./xunfei-speech-api.js";
 
@@ -74,6 +75,134 @@ async function startServer() {
   // 健康检查路由，用于测试API是否正常工作
   app.get("/api/health", (_req, res) => {
     res.json({ status: "ok", timestamp: new Date().toISOString() });
+  });
+
+  // NFC点位问答接口
+  app.get("/api/nfc", (req, res) => {
+    try {
+      const point = parseInt(req.query.point as string);
+      // 解码URL参数中的中文字符
+      const avatar = decodeURIComponent(req.query.avatar as string);
+      const question = decodeURIComponent(req.query.question as string);
+
+      console.log('[NFC] 接收参数:', { point, avatar, question });
+
+      if (!point || !avatar || !question) {
+        res.status(400).json({
+          error: "missing_params",
+          error_description: "缺少必要参数：point、avatar、question",
+        });
+        return;
+      }
+
+      // 读取统一的数据文件
+      const qaDatabasePath = path.resolve(__dirname, "..", "shared", "qa-database.json");
+      const qaDatabase = JSON.parse(readFileSync(qaDatabasePath, "utf-8"));
+
+      // 查找对应的点位
+      const pointData = qaDatabase.nfcPoints?.find((p: any) => p.point === point && p.avatar === avatar);
+      if (!pointData) {
+        console.log('[NFC] 未找到点位:', { point, avatar, availablePoints: qaDatabase.nfcPoints?.map((p: any) => ({ point: p.point, avatar: p.avatar })) || [] });
+        res.status(404).json({
+          error: "point_not_found",
+          error_description: `未找到点位 ${point} 的 ${avatar} 数据`,
+        });
+        return;
+      }
+
+      // 查找对应的问题（更灵活的匹配：去除标点、空格，忽略大小写）
+      const normalizeQuestion = (q: string) => {
+        return q.replace(/[，。？！、；：\s]/g, '').toLowerCase().trim();
+      };
+      
+      const normalizedInputQuestion = normalizeQuestion(question);
+      const questionIndex = pointData.questions.findIndex(
+        (q: any) => {
+          const normalizedQ = normalizeQuestion(q.question);
+          return q.question === question || normalizedQ === normalizedInputQuestion;
+        }
+      );
+
+      if (questionIndex === -1) {
+        console.log('[NFC] 未找到问题:', { 
+          inputQuestion: question, 
+          normalizedInput: normalizedInputQuestion,
+          availableQuestions: pointData.questions.map((q: any) => q.question)
+        });
+        res.status(404).json({
+          error: "question_not_found",
+          error_description: `未找到问题：${question}`,
+        });
+        return;
+      }
+
+      const questionData = pointData.questions[questionIndex];
+
+      // 随机选择一个答案
+      const randomAnswer = questionData.answers[Math.floor(Math.random() * questionData.answers.length)];
+
+      // 获取下一个问题（循环）
+      const nextQuestionIndex = (questionIndex + 1) % pointData.questions.length;
+      const nextQuestion = pointData.questions[nextQuestionIndex].question;
+
+      res.json({
+        success: true,
+        point,
+        avatar,
+        question,
+        answer: randomAnswer,
+        nextQuestion,
+      });
+    } catch (err: any) {
+      console.error("NFC接口错误:", err);
+      res.status(500).json({
+        error: "server_error",
+        error_description: err?.message || "服务器内部错误",
+      });
+    }
+  });
+
+  // NFC数据获取接口（用于前端获取推荐问题）
+  app.get("/api/nfc-data", (req, res) => {
+    try {
+      const point = parseInt(req.query.point as string);
+      const avatar = decodeURIComponent(req.query.avatar as string);
+
+      if (!point || !avatar) {
+        res.status(400).json({
+          error: "missing_params",
+          error_description: "缺少必要参数：point、avatar",
+        });
+        return;
+      }
+
+      // 读取统一的数据文件
+      const qaDatabasePath = path.resolve(__dirname, "..", "shared", "qa-database.json");
+      const qaDatabase = JSON.parse(readFileSync(qaDatabasePath, "utf-8"));
+
+      // 查找对应的点位
+      const pointData = qaDatabase.nfcPoints?.find((p: any) => p.point === point && p.avatar === avatar);
+      if (!pointData) {
+        res.status(404).json({
+          error: "point_not_found",
+          error_description: `未找到点位 ${point} 的 ${avatar} 数据`,
+        });
+        return;
+      }
+
+      res.json({
+        success: true,
+        point,
+        avatar,
+        pointData,
+      });
+    } catch (err: any) {
+      console.error("NFC数据接口错误:", err);
+      res.status(500).json({
+        error: "server_error",
+        error_description: err?.message || "服务器内部错误",
+      });
+    }
   });
 
   // 代理获取百度 Access Token，绕过微信 WebView 的网络限制

@@ -313,7 +313,7 @@ export class SpeechSynthesizer {
   /**
    * 播报文本（支持角色音色）
    */
-  speak(text: string, options?: {
+  async speak(text: string, options?: {
     characterId?: string; // 角色ID，用于选择音色（仅讯飞API支持）
     lang?: string;
     rate?: number;
@@ -322,42 +322,53 @@ export class SpeechSynthesizer {
     onEnd?: () => void;
     onError?: (error: any) => void;
   }) {
-    if (this.useXunfei) {
-      // 讯飞API支持角色音色
-      this.synthesizer.speak(text, {
-        characterId: options?.characterId,
-        onEnd: options?.onEnd,
-        onError: options?.onError,
-      });
-    } else if (this.useBaidu) {
-      // 百度API不支持角色音色，使用默认配置
-      this.synthesizer.speak(text, {
-        onEnd: options?.onEnd,
-        onError: options?.onError,
-      });
-    } else {
-      // 停止当前播报
+    try {
+      // 先停止当前所有正在播放的音频，避免多个音频同时播放
       this.stop();
-
-      const utterance = new SpeechSynthesisUtterance(text);
       
-      // 配置语音参数
-      utterance.lang = options?.lang || 'zh-CN';
-      utterance.rate = options?.rate || 1.0;
-      utterance.pitch = options?.pitch || 1.0;
-      utterance.volume = options?.volume || 1.0;
+      if (this.useXunfei) {
+        // 讯飞API支持角色音色，需要await异步调用
+        await this.synthesizer.speak(text, {
+          characterId: options?.characterId,
+          onEnd: options?.onEnd,
+          onError: options?.onError,
+        });
+      } else if (this.useBaidu) {
+        // 百度API不支持角色音色，使用默认配置
+        await this.synthesizer.speak(text, {
+          onEnd: options?.onEnd,
+          onError: options?.onError,
+        });
+      } else {
+        const utterance = new SpeechSynthesisUtterance(text);
+        
+        // 配置语音参数
+        utterance.lang = options?.lang || 'zh-CN';
+        utterance.rate = options?.rate || 1.0;
+        utterance.pitch = options?.pitch || 1.0;
+        utterance.volume = options?.volume || 1.0;
 
-      // 设置事件监听
-      utterance.onend = () => {
+        // 设置事件监听
+        utterance.onend = () => {
+          options?.onEnd?.();
+        };
+
+        utterance.onerror = (event) => {
+          options?.onError?.(event);
+        };
+
+        // 开始播报
+        this.synthesizer.speak(utterance);
+      }
+    } catch (error: any) {
+      console.error('❌ 语音合成调用失败:', error);
+      // 如果是自动播放策略错误，静默处理
+      if (error?.message?.includes('user didn\'t interact') || error?.name === 'NotAllowedError') {
+        console.warn('⚠️ 自动播放被阻止（需要用户交互），这是正常的浏览器行为');
         options?.onEnd?.();
-      };
-
-      utterance.onerror = (event) => {
-        options?.onError?.(event);
-      };
-
-      // 开始播报
-      this.synthesizer.speak(utterance);
+        return;
+      }
+      options?.onError?.(error instanceof Error ? error : new Error(String(error)));
     }
   }
 

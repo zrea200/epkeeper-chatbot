@@ -624,6 +624,20 @@ export class XunfeiSpeechSynthesizer {
         }
         console.log('✅ 语音播放已启动');
       } catch (playError: any) {
+        // 如果是自动播放策略错误，静默处理（这是正常的浏览器行为）
+        if (playError.name === 'NotAllowedError' || playError.message?.includes('user didn\'t interact')) {
+          console.warn('⚠️ 自动播放被阻止（需要用户交互），这是正常的浏览器行为');
+          // 清理资源但不抛出错误
+          if (this.currentAudioUrl) {
+            URL.revokeObjectURL(this.currentAudioUrl);
+            this.currentAudioUrl = null;
+          }
+          this.isSpeaking = false;
+          // 调用onEnd回调，但不抛出错误
+          options?.onEnd?.();
+          return;
+        }
+        
         console.error('❌ 语音播放启动失败:', playError);
         if (this.currentAudioUrl) {
           URL.revokeObjectURL(this.currentAudioUrl);
@@ -684,6 +698,11 @@ export class XunfeiSpeechSynthesizer {
     if (this.audio) {
       this.audio.pause();
       this.audio.currentTime = 0;
+      // 移除所有事件监听器，避免内存泄漏
+      this.audio.onended = null;
+      this.audio.onerror = null;
+      this.audio.onplay = null;
+      this.audio.onloadeddata = null;
       this.audio = null;
       this.isSpeaking = false;
     }

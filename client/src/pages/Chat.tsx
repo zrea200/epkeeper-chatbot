@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
+import { useLocation } from 'wouter';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import ChatMessage, { Message } from '@/components/ChatMessage';
@@ -12,7 +13,7 @@ import {
   getAIResponseStream,
 } from '@/lib/qa-matcher';
 import { getSmartRecommendations, Recommendation } from '@/lib/smart-recommendations';
-import { characters, Character, getDefaultCharacter } from '@/data/characters';
+import { characters, Character, getDefaultCharacter, getCharacterById } from '@/data/characters';
 import { SpeechRecognizer, SpeechSynthesizer } from '@/lib/speech';
 import { toast } from 'sonner';
 import { Volume2, VolumeX, Mic, Send } from 'lucide-react';
@@ -20,6 +21,24 @@ import { DotLottieReact } from '@lottiefiles/dotlottie-react';
 import AI_CONFIG from '@/config/ai-config';
 
 export default function Chat() {
+  const [location] = useLocation();
+  
+  // 根据URL参数初始化角色（如果有NFC参数）
+  const getInitialCharacter = (): Character => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      const avatar = params.get('avatar');
+      if (avatar) {
+        const characterId = avatar === '电盟主' ? 'leader' : 'escort';
+        const character = getCharacterById(characterId);
+        if (character) {
+          return character;
+        }
+      }
+    }
+    return getDefaultCharacter();
+  };
+  
   // 状态管理
   const [messages, setMessages] = useState<Message[]>([]);
   const [visibleMessages, setVisibleMessages] = useState<Message[]>([]); // 可见的消息列表
@@ -28,9 +47,12 @@ export default function Chat() {
   const [isThinking, setIsThinking] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [voiceEnabled, setVoiceEnabled] = useState(true);
-  const [selectedCharacter, setSelectedCharacter] = useState<Character>(getDefaultCharacter());
+  const [selectedCharacter, setSelectedCharacter] = useState<Character>(getInitialCharacter());
   const [smartRecommendations, setSmartRecommendations] = useState<Recommendation[]>([]);
   const [touchStartTime, setTouchStartTime] = useState<number>(0);
+  const [nfcInitialized, setNfcInitialized] = useState(false); // 标记NFC是否已初始化
+  const [nfcContext, setNfcContext] = useState<{ point: number; avatar: string } | null>(null); // NFC上下文状态
+  const [currentNFCQuestionIndex, setCurrentNFCQuestionIndex] = useState<number>(0); // 当前NFC问题索引，用于循环推荐
 
   const hexToRgba = (hex: string, alpha: number) => {
     const sanitized = hex.replace('#', '');
@@ -49,32 +71,175 @@ export default function Chat() {
   const speechSynthesizerRef = useRef<SpeechSynthesizer | null>(null);
   const lastTriggerTimeRef = useRef<number>(0);
 
-  // 初始化
-  useEffect(() => {
-    // 初始化语音识别和合成
-    speechRecognizerRef.current = new SpeechRecognizer();
-    speechSynthesizerRef.current = new SpeechSynthesizer();
-
-    // 添加欢迎消息
-    const welcomeMessage: Message = {
-      id: '0',
-      content: selectedCharacter.greeting,
-      type: 'bot',
-      timestamp: new Date(),
-    };
-    setMessages([welcomeMessage]);
-
-    // 获取快捷问题
-    const quickQuestions = getQuickQuestions();
-    if (quickQuestions.length > 0) {
-      setSmartRecommendations(
-        quickQuestions.slice(0, 3).map((q) => ({
-          question: q,
-          category: '快捷问题',
-        }))
-      );
+  // 获取NFC推荐问题（从当前点位的问题列表中循环获取）
+  const getNFCRecommendations = async (point: number, avatar: string, currentQuestionIndex: number): Promise<{ question: string | null; nextIndex: number }> => {
+    try {
+      // 通过API获取NFC数据
+      const response = await fetch(`/api/nfc-data?point=${point}&avatar=${encodeURIComponent(avatar)}`);
+      if (!response.ok) {
+        console.error('[Chat] 获取NFC数据失败:', response.status);
+        return { question: null, nextIndex: currentQuestionIndex };
+      }
+      const data = await response.json();
+      
+      if (data.pointData && data.pointData.questions && data.pointData.questions.length > 0) {
+        // 循环获取下一个问题
+        const nextIndex = (currentQuestionIndex + 1) % data.pointData.questions.length;
+        return {
+          question: data.pointData.questions[nextIndex].question,
+          nextIndex,
+        };
+      }
+      return { question: null, nextIndex: currentQuestionIndex };
+    } catch (error) {
+      console.error('[Chat] 获取NFC推荐问题失败:', error);
+      return { question: null, nextIndex: currentQuestionIndex };
     }
-  }, [selectedCharacter]);
+  };
+
+  // 初始化NFC场景（通过URL参数）
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const point = params.get('point');
+    const avatar = params.get('avatar');
+    const question = params.get('question');
+
+    // 如果URL中有NFC参数，则初始化NFC场景
+    if (point && avatar && question) {
+      const pointNum = parseInt(point);
+      console.log('[Chat] NFC场景初始化:', { point: pointNum, avatar, question });
+      
+      // 保存NFC上下文到状态中
+      setNfcContext({ point: pointNum, avatar });
+      
+      // 初始化语音识别和合成（NFC场景也需要）
+      if (!speechRecognizerRef.current) {
+        speechRecognizerRef.current = new SpeechRecognizer();
+      }
+      if (!speechSynthesizerRef.current) {
+        speechSynthesizerRef.current = new SpeechSynthesizer();
+      }
+      
+      // 根据avatar设置角色（确保角色已正确设置）
+      const characterId = avatar === '电盟主' ? 'leader' : 'escort';
+      const character = getCharacterById(characterId);
+      if (character) {
+        console.log('[Chat] 确保角色正确:', character.name);
+        // 使用函数式更新确保角色正确
+        setSelectedCharacter((prev) => {
+          if (prev.id !== character.id) {
+            return character;
+          }
+          return prev;
+        });
+      }
+
+      // 调用NFC接口获取第一个问题的答案
+      fetch(`/api/nfc?point=${encodeURIComponent(point)}&avatar=${encodeURIComponent(avatar)}&question=${encodeURIComponent(question)}`)
+        .then(async (res) => {
+          if (!res.ok) {
+            const errorData = await res.json().catch(() => ({}));
+            throw new Error(errorData.error_description || `请求失败: ${res.status}`);
+          }
+          return res.json();
+        })
+        .then(async (result: { success: boolean; point: number; avatar: string; question: string; answer: string; nextQuestion: string }) => {
+          console.log('[Chat] NFC接口返回:', result);
+          
+          // 查找当前问题在NFC数据中的索引
+          try {
+            const nfcDataRes = await fetch(`/api/nfc-data?point=${pointNum}&avatar=${encodeURIComponent(avatar)}`);
+            if (nfcDataRes.ok) {
+              const nfcData = await nfcDataRes.json();
+              if (nfcData.pointData && nfcData.pointData.questions) {
+                const normalizeQuestion = (q: string) => {
+                  return q.replace(/[，。？！、；：\s]/g, '').toLowerCase().trim();
+                };
+                const normalizedInput = normalizeQuestion(question);
+                const questionIndex = nfcData.pointData.questions.findIndex(
+                  (q: any) => {
+                    const normalizedQ = normalizeQuestion(q.question);
+                    return q.question === question || normalizedQ === normalizedInput;
+                  }
+                );
+                if (questionIndex !== -1) {
+                  setCurrentNFCQuestionIndex(questionIndex);
+                }
+              }
+            }
+          } catch (err) {
+            console.error('[Chat] 获取NFC问题索引失败:', err);
+          }
+          
+          // 创建用户消息
+          const userMessage: Message = {
+            id: Date.now().toString(),
+            content: result.question,
+            type: 'user',
+            timestamp: new Date(),
+          };
+
+          // 创建AI回答消息
+          const botMessage: Message = {
+            id: (Date.now() + 1).toString(),
+            content: result.answer,
+            type: 'bot',
+            timestamp: new Date(),
+          };
+
+          setMessages([userMessage, botMessage]);
+
+          // 设置推荐问题（使用返回的nextQuestion）
+          if (result.nextQuestion) {
+            setSmartRecommendations([{
+              question: result.nextQuestion,
+              category: '猜你想问',
+            }]);
+          }
+
+          // NFC场景下不自动播放语音（浏览器自动播放策略限制）
+          // 用户可以通过点击语音按钮手动播放
+          // 语音播报功能保留，但不自动触发
+        })
+        .catch((err) => {
+          console.error('NFC接口调用失败:', err);
+          toast.error('加载失败', {
+            description: err.message || '请稍后重试',
+          });
+        });
+      
+      return; // NFC场景不执行常规初始化
+    }
+
+    // 常规初始化（非NFC场景）- 只在首次加载时执行
+    if (!nfcInitialized && !point && !avatar && !question) {
+      setNfcInitialized(true);
+      
+      // 初始化语音识别和合成
+      speechRecognizerRef.current = new SpeechRecognizer();
+      speechSynthesizerRef.current = new SpeechSynthesizer();
+
+      // 添加欢迎消息
+      const welcomeMessage: Message = {
+        id: '0',
+        content: selectedCharacter.greeting,
+        type: 'bot',
+        timestamp: new Date(),
+      };
+      setMessages([welcomeMessage]);
+
+      // 获取快捷问题
+      const quickQuestions = getQuickQuestions();
+      if (quickQuestions.length > 0) {
+        setSmartRecommendations(
+          quickQuestions.slice(0, 3).map((q) => ({
+            question: q,
+            category: '快捷问题',
+          }))
+        );
+      }
+    }
+  }, [location, selectedCharacter.greeting]); // location变化时重新执行，selectedCharacter.greeting用于常规初始化
 
   // 智能管理可见消息：类似虚拟列表，保持最新的消息可见
   useEffect(() => {
@@ -152,6 +317,103 @@ export default function Chat() {
     // 设置思考状态
     setIsThinking(true);
 
+    // NFC场景：优先从NFC数据中查找答案
+    if (nfcContext) {
+      // 调用NFC接口查找答案
+      fetch(`/api/nfc?point=${encodeURIComponent(nfcContext.point)}&avatar=${encodeURIComponent(nfcContext.avatar)}&question=${encodeURIComponent(text)}`)
+        .then(async (res) => {
+          if (res.ok) {
+            const result = await res.json();
+            // NFC数据中有答案，使用NFC答案
+            const assistantMessage: Message = {
+              id: (Date.now() + 1).toString(),
+              content: result.answer,
+              type: 'bot',
+              timestamp: new Date(),
+            };
+
+            setMessages((prev) => [...prev, assistantMessage]);
+            setIsThinking(false);
+
+            // 更新问题索引并获取推荐问题
+            let updatedIndex = currentNFCQuestionIndex;
+            try {
+              const nfcDataRes = await fetch(`/api/nfc-data?point=${nfcContext.point}&avatar=${encodeURIComponent(nfcContext.avatar)}`);
+              if (nfcDataRes.ok) {
+                const nfcData = await nfcDataRes.json();
+                if (nfcData.pointData && nfcData.pointData.questions) {
+                  const normalizeQuestion = (q: string) => {
+                    return q.replace(/[，。？！、；：\s]/g, '').toLowerCase().trim();
+                  };
+                  const normalizedInput = normalizeQuestion(text);
+                  const questionIndex = nfcData.pointData.questions.findIndex(
+                    (q: any) => {
+                      const normalizedQ = normalizeQuestion(q.question);
+                      return q.question === text || normalizedQ === normalizedInput;
+                    }
+                  );
+                  if (questionIndex !== -1) {
+                    updatedIndex = questionIndex;
+                    setCurrentNFCQuestionIndex(questionIndex);
+                  }
+                }
+              }
+            } catch (err) {
+              console.error('[Chat] 获取NFC问题索引失败:', err);
+            }
+
+            // 更新推荐问题（使用更新后的索引）
+            getNFCRecommendations(nfcContext.point, nfcContext.avatar, updatedIndex)
+              .then((recResult) => {
+                if (recResult.question) {
+                  setCurrentNFCQuestionIndex(recResult.nextIndex);
+                  setSmartRecommendations([{
+                    question: recResult.question,
+                    category: '猜你想问',
+                  }]);
+                }
+              })
+              .catch((err) => {
+                console.error('[Chat] 获取NFC推荐问题失败:', err);
+              });
+
+            // 语音播报
+            if (voiceEnabled && speechSynthesizerRef.current) {
+              setIsSpeaking(true);
+              speechSynthesizerRef.current.speak(assistantMessage.content, {
+                characterId: selectedCharacter.id,
+                onEnd: () => {
+                  setIsSpeaking(false);
+                },
+                onError: (error) => {
+                  console.error('语音播报失败:', error);
+                  setIsSpeaking(false);
+                },
+              }).catch((error) => {
+                console.error('语音播报调用失败:', error);
+                setIsSpeaking(false);
+              });
+            }
+            return; // NFC场景找到答案，直接返回
+          } else {
+            // NFC数据中没有找到答案，继续后续流程（检查qa-database或调用AI）
+            handleNonNFCAnswer(text);
+          }
+        })
+        .catch((err) => {
+          console.error('[Chat] NFC接口调用失败:', err);
+          // NFC接口调用失败，继续后续流程
+          handleNonNFCAnswer(text);
+        });
+      return; // NFC场景下，无论是否找到答案，都在上面的回调中处理
+    }
+
+    // 非NFC场景：常规处理流程
+    handleNonNFCAnswer(text);
+  };
+
+  // 处理非NFC场景的答案查找（qa-database匹配或AI调用）
+  const handleNonNFCAnswer = (text: string) => {
     // 无论来源如何，先尝试精确匹配数据库中的标准问题
     // 这样可以保证：点击推荐问题和手动输入相同问题时，答案一致
     const exactMatch = findExactAnswer(text);
@@ -169,13 +431,30 @@ export default function Chat() {
         setMessages((prev) => [...prev, assistantMessage]);
         setIsThinking(false);
 
-        // 获取智能推荐
-        const recommendations = getSmartRecommendations(
-          text,
-          assistantMessage.content,
-          messages.map((m) => m.content)
-        );
-        setSmartRecommendations(recommendations);
+        // NFC场景：更新推荐问题为NFC推荐问题
+        if (nfcContext) {
+          getNFCRecommendations(nfcContext.point, nfcContext.avatar, currentNFCQuestionIndex)
+            .then((result) => {
+              if (result.question) {
+                setCurrentNFCQuestionIndex(result.nextIndex);
+                setSmartRecommendations([{
+                  question: result.question,
+                  category: '猜你想问',
+                }]);
+              }
+            })
+            .catch((err) => {
+              console.error('[Chat] 获取NFC推荐问题失败:', err);
+            });
+        } else {
+          // 常规场景：获取智能推荐
+          const recommendations = getSmartRecommendations(
+            text,
+            assistantMessage.content,
+            messages.map((m) => m.content)
+          );
+          setSmartRecommendations(recommendations);
+        }
 
         // 语音播报
         if (voiceEnabled && speechSynthesizerRef.current) {
@@ -185,6 +464,13 @@ export default function Chat() {
             onEnd: () => {
               setIsSpeaking(false);
             },
+            onError: (error) => {
+              console.error('语音播报失败:', error);
+              setIsSpeaking(false);
+            },
+          }).catch((error) => {
+            console.error('语音播报调用失败:', error);
+            setIsSpeaking(false);
           });
         }
       }, 300); // 本地匹配响应更快，减少延迟
@@ -206,13 +492,30 @@ export default function Chat() {
         setMessages((prev) => [...prev, assistantMessage]);
         setIsThinking(false);
 
-        // 获取智能推荐
-        const recommendations = getSmartRecommendations(
-          text,
-          assistantMessage.content,
-          messages.map((m) => m.content)
-        );
-        setSmartRecommendations(recommendations);
+        // NFC场景：更新推荐问题为NFC推荐问题
+        if (nfcContext) {
+          getNFCRecommendations(nfcContext.point, nfcContext.avatar, currentNFCQuestionIndex)
+            .then((result) => {
+              if (result.question) {
+                setCurrentNFCQuestionIndex(result.nextIndex);
+                setSmartRecommendations([{
+                  question: result.question,
+                  category: '猜你想问',
+                }]);
+              }
+            })
+            .catch((err) => {
+              console.error('[Chat] 获取NFC推荐问题失败:', err);
+            });
+        } else {
+          // 常规场景：获取智能推荐
+          const recommendations = getSmartRecommendations(
+            text,
+            assistantMessage.content,
+            messages.map((m) => m.content)
+          );
+          setSmartRecommendations(recommendations);
+        }
 
         // 语音播报
         if (voiceEnabled && speechSynthesizerRef.current) {
@@ -222,6 +525,13 @@ export default function Chat() {
             onEnd: () => {
               setIsSpeaking(false);
             },
+            onError: (error) => {
+              console.error('语音播报失败:', error);
+              setIsSpeaking(false);
+            },
+          }).catch((error) => {
+            console.error('语音播报调用失败:', error);
+            setIsSpeaking(false);
           });
         }
       }, 800);
@@ -268,24 +578,48 @@ export default function Chat() {
         setIsThinking(false);
         setIsSpeaking(false);
 
-        // 获取智能推荐
-        const recommendations = getSmartRecommendations(
-          text,
-          fullResponse,
-          messages.map((m) => m.content)
-        );
-        setSmartRecommendations(recommendations);
-
-        // 语音播报完整内容
-        if (voiceEnabled && speechSynthesizerRef.current && fullResponse) {
-          setIsSpeaking(true);
-          speechSynthesizerRef.current.speak(fullResponse, {
-            characterId: selectedCharacter.id,
-            onEnd: () => {
-              setIsSpeaking(false);
-            },
-          });
+        // NFC场景：更新推荐问题为NFC推荐问题
+        if (nfcContext) {
+          getNFCRecommendations(nfcContext.point, nfcContext.avatar, currentNFCQuestionIndex)
+            .then((result) => {
+              if (result.question) {
+                setCurrentNFCQuestionIndex(result.nextIndex);
+                setSmartRecommendations([{
+                  question: result.question,
+                  category: '猜你想问',
+                }]);
+              }
+            })
+            .catch((err) => {
+              console.error('[Chat] 获取NFC推荐问题失败:', err);
+            });
+        } else {
+          // 常规场景：获取智能推荐
+          const recommendations = getSmartRecommendations(
+            text,
+            fullResponse,
+            messages.map((m) => m.content)
+          );
+          setSmartRecommendations(recommendations);
         }
+
+          // 语音播报完整内容
+          if (voiceEnabled && speechSynthesizerRef.current && fullResponse) {
+            setIsSpeaking(true);
+            speechSynthesizerRef.current.speak(fullResponse, {
+              characterId: selectedCharacter.id,
+              onEnd: () => {
+                setIsSpeaking(false);
+              },
+              onError: (error) => {
+                console.error('语音播报失败:', error);
+                setIsSpeaking(false);
+              },
+            }).catch((error) => {
+              console.error('语音播报调用失败:', error);
+              setIsSpeaking(false);
+            });
+          }
       },
       // 错误时的回调
       (error: Error) => {
@@ -312,6 +646,13 @@ export default function Chat() {
               onEnd: () => {
                 setIsSpeaking(false);
               },
+              onError: (error) => {
+                console.error('语音播报失败:', error);
+                setIsSpeaking(false);
+              },
+            }).catch((error) => {
+              console.error('语音播报调用失败:', error);
+              setIsSpeaking(false);
             });
           }
         } else {
@@ -323,6 +664,7 @@ export default function Chat() {
 
   // 处理推荐问题点击
   const handleRecommendation = (question: string) => {
+    // NFC场景和常规场景都直接发送消息，不再刷新页面
     handleSendMessage(question);
   };
 
@@ -415,6 +757,14 @@ export default function Chat() {
 
   // 切换人物
   const handleSwitchCharacter = () => {
+    // NFC场景下不允许切换顾问，因为问题和答案都是针对特定avatar的
+    if (nfcContext) {
+      toast.info('当前场景下无法切换顾问', {
+        description: '当前场景已固定角色，请退出当前场景后再切换',
+      });
+      return;
+    }
+    
     // 切换顾问时，先停止当前正在播放的语音
     stopCurrentSpeech();
     
@@ -454,11 +804,15 @@ export default function Chat() {
             variant="outline"
             size="sm"
             onClick={handleSwitchCharacter}
+            disabled={!!nfcContext}
             className="text-xs h-8 px-3 rounded-lg border-2 font-medium"
             style={{
               borderColor: selectedCharacter.accentColor,
               color: selectedCharacter.accentColor,
+              opacity: nfcContext ? 0.5 : 1,
+              cursor: nfcContext ? 'not-allowed' : 'pointer',
             }}
+            title={nfcContext ? 'NFC场景下无法切换顾问' : '切换顾问'}
           >
             切换顾问
           </Button>
