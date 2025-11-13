@@ -33,7 +33,7 @@ Page({
           console.log('获取 code 成功:', res.code);
           // 调用后端接口换取 session_key 和 openid
           wx.request({
-            url: 'https://your-domain.com/api/wechat/login', // TODO: 替换为你的实际域名
+            url: 'https://electric.langcore.net/api/wechat/login',
             method: 'POST',
             data: {
               code: res.code
@@ -115,7 +115,7 @@ Page({
 
       // 调用后端接口解密手机号
       wx.request({
-        url: 'https://your-domain.com/api/wechat/decrypt-phone', // TODO: 替换为你的实际域名
+        url: 'https://electric.langcore.net/api/wechat/decrypt-phone',
         method: 'POST',
         data: {
           encryptedData: encryptedData,
@@ -164,31 +164,120 @@ Page({
     }
   },
 
-  // 跳转到 web-view 页面
-  navigateToWebView() {
-    // 构建用户信息数据
-    const userData = {
-      nickname: this.data.userInfo?.nickName || '',
-      avatar: this.data.userInfo?.avatarUrl || '',
-      phoneNumber: this.data.phoneNumberDecrypted || null, // 使用解密后的手机号
-      openid: this.data.openid || app.globalData.openid || null,
-    };
+  // 保存用户信息到后端，然后跳转到网页
+  async navigateToWebView() {
+    const openid = this.data.openid || app.globalData.openid;
+    const nickname = this.data.userInfo?.nickName || '';
+    const avatar = this.data.userInfo?.avatarUrl || '';
+    const phoneNumber = this.data.phoneNumberDecrypted || null;
 
-    // 将用户信息存储到全局，供 web-view 页面使用
-    app.globalData.userInfo = this.data.userInfo;
-    app.globalData.phoneNumber = this.data.phoneNumber;
-    app.globalData.phoneNumberDecrypted = this.data.phoneNumberDecrypted;
+    // 如果没有 openid，先尝试登录
+    if (!openid) {
+      wx.showToast({
+        title: '正在登录...',
+        icon: 'loading'
+      });
+      // 等待登录完成
+      await new Promise((resolve) => {
+        setTimeout(() => {
+          const newOpenid = this.data.openid || app.globalData.openid;
+          if (newOpenid) {
+            resolve(newOpenid);
+          } else {
+            resolve(null);
+          }
+        }, 1000);
+      });
+    }
 
-    // 跳转到 web-view 页面
-    wx.navigateTo({
-      url: `/pages/webview/webview?userData=${encodeURIComponent(JSON.stringify(userData))}`
+    const finalOpenid = this.data.openid || app.globalData.openid;
+    
+    if (!finalOpenid) {
+      wx.showToast({
+        title: '登录失败，请重试',
+        icon: 'none'
+      });
+      return;
+    }
+
+    // 保存用户信息到后端
+    wx.request({
+      url: 'https://electric.langcore.net/api/wechat/user', // 使用实际域名
+      method: 'POST',
+      data: {
+        openid: finalOpenid,
+        nickname: nickname,
+        avatar: avatar,
+        phoneNumber: phoneNumber,
+        source: 'miniprogram',
+      },
+      success: (res) => {
+        if (res.data.success) {
+          console.log('用户信息已保存到后端');
+          // 跳转到网页（使用小程序跳转外部链接）
+          wx.showModal({
+            title: '授权成功',
+            content: '即将跳转到智能助手页面',
+            showCancel: false,
+            success: () => {
+              // 复制链接到剪贴板
+              wx.setClipboardData({
+                data: 'https://electric.langcore.net/',
+                success: () => {
+                  wx.showModal({
+                    title: '链接已复制',
+                    content: '请在浏览器中打开链接访问智能助手',
+                    showCancel: false,
+                    confirmText: '知道了',
+                  });
+                }
+              });
+            }
+          });
+        } else {
+          console.error('保存用户信息失败:', res.data);
+          wx.showToast({
+            title: '保存失败',
+            icon: 'none'
+          });
+        }
+      },
+      fail: (err) => {
+        console.error('保存用户信息请求失败:', err);
+        // 即使保存失败，也允许用户跳转
+        wx.showModal({
+          title: '提示',
+          content: '网络错误，但您可以继续访问',
+          showCancel: false,
+          success: () => {
+            wx.setClipboardData({
+              data: 'https://electric.langcore.net/',
+              success: () => {
+                wx.showModal({
+                  title: '链接已复制',
+                  content: '请在浏览器中打开链接访问智能助手',
+                  showCancel: false,
+                });
+              }
+            });
+          }
+        });
+      }
     });
   },
 
   // 跳过授权，直接进入（可选）
   skipAuth() {
-    wx.navigateTo({
-      url: '/pages/webview/webview'
+    wx.setClipboardData({
+      data: 'https://electric.langcore.net/',
+      success: () => {
+        wx.showModal({
+          title: '链接已复制',
+          content: '请在浏览器中打开链接访问智能助手',
+          showCancel: false,
+          confirmText: '知道了',
+        });
+      }
     });
   }
 });

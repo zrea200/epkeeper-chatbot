@@ -27,11 +27,9 @@ Page({
       };
     }
 
-    // 构建网页 URL（根据你的实际部署地址修改）
-    // 开发环境可以使用 localhost，生产环境需要使用 HTTPS 域名
+    // 构建网页 URL
     // 注意：小程序 web-view 必须使用 HTTPS，且需要在微信公众平台配置业务域名
-    // 开发环境测试时，可以使用内网穿透工具（如 ngrok）将本地服务暴露为 HTTPS
-    const baseUrl = 'https://your-domain.com'; // TODO: 替换为你的实际域名，例如：https://chatbot.example.com
+    const baseUrl = 'https://electric.langcore.net';
     const webviewUrl = baseUrl + (userData ? `?from=miniprogram&userData=${encodeURIComponent(JSON.stringify(userData))}` : '?from=miniprogram');
 
     this.setData({

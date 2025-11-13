@@ -4,11 +4,16 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { readFileSync } from "fs";
 import crypto from "crypto";
+import { config } from "dotenv";
 import { createBaiduSpeechAPIFromEnv, BaiduSpeechAPI } from "./baidu-speech-api.js";
 import { createXunfeiSpeechAPIFromEnv, XunfeiSpeechAPI } from "./xunfei-speech-api.js";
+import { createOrUpdateUser, getUserByOpenid } from "./db/index.js";
+import { initDatabase } from "./db/init.js";
 
+// 加载 .env 文件
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+config({ path: path.resolve(__dirname, "..", ".env") });
 
 // 创建百度语音API实例（单例）
 let baiduSpeechAPI: BaiduSpeechAPI | null = null;
@@ -40,6 +45,14 @@ function getXunfeiSpeechAPI(): XunfeiSpeechAPI {
 }
 
 async function startServer() {
+  // 初始化数据库
+  try {
+    await initDatabase();
+  } catch (err) {
+    console.error('数据库初始化失败:', err);
+    console.error('请检查数据库配置和连接');
+  }
+
   const app = express();
   const server = createServer(app);
 
@@ -320,45 +333,40 @@ async function startServer() {
     try {
       const { nickname, avatar, phoneNumber, openid, source } = req.body || {};
 
-      // 验证必要字段
-      if (!nickname && !openid) {
+      // 验证必要字段：必须有 openid
+      if (!openid) {
         res.status(400).json({
           error: "missing_params",
-          error_description: "缺少必要参数：nickname 或 openid",
+          error_description: "缺少必要参数：openid",
         });
         return;
       }
 
-      // 这里可以将用户信息存储到数据库
-      // 当前项目未使用数据库，可以存储到文件或内存中
-      // 示例：存储到 JSON 文件（需要先创建 users.json 文件）
-      const userData = {
-        openid: openid || `temp_${Date.now()}`, // 如果没有 openid，生成临时 ID
-        nickname: nickname || '',
-        avatar: avatar || '',
-        phoneNumber: phoneNumber || null,
+      // 存储到数据库
+      const user = await createOrUpdateUser({
+        openid,
+        nickname: nickname || undefined,
+        avatar: avatar || undefined,
+        phone_number: phoneNumber || undefined,
         source: source || 'miniprogram',
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      };
-
-      console.log('[WECHAT] 用户信息:', {
-        openid: userData.openid,
-        nickname: userData.nickname,
-        hasAvatar: !!userData.avatar,
-        hasPhoneNumber: !!userData.phoneNumber,
       });
 
-      // TODO: 实际项目中应该存储到数据库
-      // 这里先返回成功，实际存储逻辑可以根据需要实现
-      // 例如：使用 SQLite、MongoDB、PostgreSQL 等
+      console.log('[WECHAT] 用户信息已保存到数据库:', {
+        id: user.id,
+        openid: user.openid,
+        nickname: user.nickname,
+        hasAvatar: !!user.avatar,
+        hasPhoneNumber: !!user.phone_number,
+      });
 
       res.json({
         success: true,
         message: "用户信息保存成功",
         data: {
-          openid: userData.openid,
-          nickname: userData.nickname,
+          id: user.id,
+          openid: user.openid,
+          nickname: user.nickname,
+          hasPhoneNumber: !!user.phone_number,
         },
       });
     } catch (err: any) {
