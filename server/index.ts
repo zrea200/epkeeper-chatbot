@@ -3,6 +3,7 @@ import { createServer } from "http";
 import path from "path";
 import { fileURLToPath } from "url";
 import { readFileSync } from "fs";
+import crypto from "crypto";
 import { createBaiduSpeechAPIFromEnv, BaiduSpeechAPI } from "./baidu-speech-api.js";
 import { createXunfeiSpeechAPIFromEnv, XunfeiSpeechAPI } from "./xunfei-speech-api.js";
 
@@ -198,6 +199,170 @@ async function startServer() {
       });
     } catch (err: any) {
       console.error("NFC数据接口错误:", err);
+      res.status(500).json({
+        error: "server_error",
+        error_description: err?.message || "服务器内部错误",
+      });
+    }
+  });
+
+  // 微信小程序登录接口（通过 code 换取 session_key 和 openid）
+  app.post("/api/wechat/login", async (req, res) => {
+    console.log(`[WECHAT] 收到登录请求: ${req.method} ${req.path}`);
+
+    try {
+      const { code } = req.body || {};
+
+      if (!code) {
+        res.status(400).json({
+          error: "missing_code",
+          error_description: "缺少 code 参数",
+        });
+        return;
+      }
+
+      const appId = process.env.WECHAT_APPID;
+      const appSecret = process.env.WECHAT_APPSECRET;
+
+      if (!appId || !appSecret) {
+        res.status(500).json({
+          error: "missing_config",
+          error_description: "服务器未配置微信小程序 AppID 或 AppSecret",
+        });
+        return;
+      }
+
+      // 调用微信接口换取 session_key 和 openid
+      const url = `https://api.weixin.qq.com/sns/jscode2session?appid=${appId}&secret=${appSecret}&js_code=${code}&grant_type=authorization_code`;
+      
+      const response = await fetch(url);
+      const data = await response.json();
+
+      if (data.errcode) {
+        console.error('[WECHAT] 登录失败:', data);
+        res.status(400).json({
+          error: "login_failed",
+          error_description: data.errmsg || "登录失败",
+        });
+        return;
+      }
+
+      console.log('[WECHAT] 登录成功:', {
+        openid: data.openid,
+        hasSessionKey: !!data.session_key,
+      });
+
+      res.json({
+        success: true,
+        data: {
+          openid: data.openid,
+          session_key: data.session_key,
+        },
+      });
+    } catch (err: any) {
+      console.error("微信登录错误:", err);
+      res.status(500).json({
+        error: "server_error",
+        error_description: err?.message || "服务器内部错误",
+      });
+    }
+  });
+
+  // 微信小程序手机号解密接口
+  app.post("/api/wechat/decrypt-phone", async (req, res) => {
+    console.log(`[WECHAT] 收到手机号解密请求: ${req.method} ${req.path}`);
+
+    try {
+      const { encryptedData, iv, sessionKey } = req.body || {};
+
+      if (!encryptedData || !iv || !sessionKey) {
+        res.status(400).json({
+          error: "missing_params",
+          error_description: "缺少必要参数：encryptedData、iv、sessionKey",
+        });
+        return;
+      }
+
+      // 解密手机号
+      const decipher = crypto.createDecipheriv('aes-128-cbc', Buffer.from(sessionKey, 'base64'), Buffer.from(iv, 'base64'));
+      let decrypted = decipher.update(encryptedData, 'base64', 'utf8');
+      decrypted += decipher.final('utf8');
+      
+      const phoneData = JSON.parse(decrypted);
+      const phoneNumber = phoneData.phoneNumber;
+
+      console.log('[WECHAT] 手机号解密成功:', {
+        hasPhoneNumber: !!phoneNumber,
+      });
+
+      res.json({
+        success: true,
+        data: {
+          phoneNumber: phoneNumber,
+        },
+      });
+    } catch (err: any) {
+      console.error("手机号解密错误:", err);
+      res.status(500).json({
+        error: "decrypt_failed",
+        error_description: err?.message || "解密失败",
+      });
+    }
+  });
+
+  // 微信小程序用户信息存储接口
+  app.post("/api/wechat/user", async (req, res) => {
+    console.log(`[WECHAT] 收到用户信息存储请求: ${req.method} ${req.path}`, {
+      hasBody: !!req.body,
+      bodyKeys: req.body ? Object.keys(req.body) : [],
+    });
+
+    try {
+      const { nickname, avatar, phoneNumber, openid, source } = req.body || {};
+
+      // 验证必要字段
+      if (!nickname && !openid) {
+        res.status(400).json({
+          error: "missing_params",
+          error_description: "缺少必要参数：nickname 或 openid",
+        });
+        return;
+      }
+
+      // 这里可以将用户信息存储到数据库
+      // 当前项目未使用数据库，可以存储到文件或内存中
+      // 示例：存储到 JSON 文件（需要先创建 users.json 文件）
+      const userData = {
+        openid: openid || `temp_${Date.now()}`, // 如果没有 openid，生成临时 ID
+        nickname: nickname || '',
+        avatar: avatar || '',
+        phoneNumber: phoneNumber || null,
+        source: source || 'miniprogram',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+
+      console.log('[WECHAT] 用户信息:', {
+        openid: userData.openid,
+        nickname: userData.nickname,
+        hasAvatar: !!userData.avatar,
+        hasPhoneNumber: !!userData.phoneNumber,
+      });
+
+      // TODO: 实际项目中应该存储到数据库
+      // 这里先返回成功，实际存储逻辑可以根据需要实现
+      // 例如：使用 SQLite、MongoDB、PostgreSQL 等
+
+      res.json({
+        success: true,
+        message: "用户信息保存成功",
+        data: {
+          openid: userData.openid,
+          nickname: userData.nickname,
+        },
+      });
+    } catch (err: any) {
+      console.error("微信用户信息存储错误:", err);
       res.status(500).json({
         error: "server_error",
         error_description: err?.message || "服务器内部错误",
@@ -507,7 +672,20 @@ async function startServer() {
       : path.resolve(__dirname, "..", "dist", "public");
 
   // 注册静态文件服务（Express会自动跳过已匹配的API路由）
-  app.use(express.static(staticPath));
+  // 添加缓存头优化性能
+  app.use(express.static(staticPath, {
+    maxAge: process.env.NODE_ENV === 'production' ? '1y' : '0', // 生产环境缓存1年
+    etag: true,
+    lastModified: true,
+    setHeaders: (res, path) => {
+      // 对带 hash 的资源设置长期缓存
+      if (path.match(/\.[a-f0-9]{8,}\.(js|css|png|jpg|jpeg|gif|svg|woff|woff2|ttf|eot|json)$/i)) {
+        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+      } else if (path.match(/\.(js|css|png|jpg|jpeg|gif|svg|woff|woff2|ttf|eot|json)$/i)) {
+        res.setHeader('Cache-Control', 'public, max-age=86400'); // 1天
+      }
+    },
+  }));
 
   // Handle client-side routing - serve index.html for all GET routes (excluding /api/*)
   // 注意：这个通配符路由必须在所有API路由之后

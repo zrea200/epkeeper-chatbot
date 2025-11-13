@@ -40,7 +40,7 @@ export default function AvatarPlaceholder({
         <p className="text-xs text-gray-500 mt-1">为您服务</p>
       </div>
 
-      {/* 提示：Live2D 模型位置 */}
+      {/* AI 助手标识 */}
       <div className="absolute top-4 right-4">
         <div className="px-3 py-1 bg-white/80 backdrop-blur-sm rounded-full text-xs text-gray-600">
           AI 助手

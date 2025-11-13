@@ -18,4 +18,9 @@ import "./index.css";
 //   });
 // }
 
-createRoot(document.getElementById("root")!).render(<App />);
+// 立即渲染React应用，但使用Scheduler优化
+// 注意：React 18+ 已经内置了并发渲染优化
+const rootElement = document.getElementById("root");
+if (rootElement) {
+  createRoot(rootElement).render(<App />);
+}

@@ -1,9 +1,8 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import { useLocation } from 'wouter';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import ChatMessage, { Message } from '@/components/ChatMessage';
-import Live2DModel from '@/components/Live2DModel';
 import { 
   findBestAnswer,
   findExactAnswer,
@@ -17,7 +16,7 @@ import { characters, Character, getDefaultCharacter, getCharacterById } from '@/
 import { SpeechRecognizer, SpeechSynthesizer } from '@/lib/speech';
 import { toast } from 'sonner';
 import { Volume2, VolumeX, Mic, Send } from 'lucide-react';
-import { DotLottieReact } from '@lottiefiles/dotlottie-react';
+import LazyLottie from '@/components/LazyLottie';
 import AI_CONFIG from '@/config/ai-config';
 
 export default function Chat() {
@@ -53,7 +52,14 @@ export default function Chat() {
   const [nfcInitialized, setNfcInitialized] = useState(false); // 标记NFC是否已初始化
   const [nfcContext, setNfcContext] = useState<{ point: number; avatar: string } | null>(null); // NFC上下文状态
   const [currentNFCQuestionIndex, setCurrentNFCQuestionIndex] = useState<number>(0); // 当前NFC问题索引，用于循环推荐
+  const [wechatUserInfo, setWechatUserInfo] = useState<{
+    nickname?: string;
+    avatar?: string;
+    phoneNumber?: string;
+    openid?: string;
+  } | null>(null); // 微信小程序用户信息
 
+  // 颜色转换函数
   const hexToRgba = (hex: string, alpha: number) => {
     const sanitized = hex.replace('#', '');
     const bigint = parseInt(sanitized.length === 3
@@ -96,6 +102,84 @@ export default function Chat() {
       return { question: null, nextIndex: currentQuestionIndex };
     }
   };
+
+  // 检测是否在微信小程序 web-view 环境中
+  const isInWeChatMiniProgram = (): boolean => {
+    if (typeof window === 'undefined') return false;
+    // 方法1: 检查 window.__wxjs_environment
+    if ((window as any).__wxjs_environment === 'miniprogram') {
+      return true;
+    }
+    // 方法2: 检查 userAgent
+    const ua = navigator.userAgent.toLowerCase();
+    if (ua.includes('miniprogram')) {
+      return true;
+    }
+    // 方法3: 检查 URL 参数
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('from') === 'miniprogram') {
+      return true;
+    }
+    return false;
+  };
+
+  // 获取并处理微信小程序用户信息
+  useEffect(() => {
+    if (!isInWeChatMiniProgram()) {
+      return;
+    }
+
+    // 从 URL 参数获取用户信息（小程序通过 URL 传递）
+    const params = new URLSearchParams(window.location.search);
+    const userDataParam = params.get('userData');
+    
+    if (userDataParam) {
+      try {
+        const userData = JSON.parse(decodeURIComponent(userDataParam));
+        console.log('[Chat] 收到小程序用户信息:', userData);
+        
+        setWechatUserInfo({
+          nickname: userData.nickname,
+          avatar: userData.avatar,
+          phoneNumber: userData.phoneNumber,
+          openid: userData.openid,
+        });
+
+        // 存储到 localStorage
+        localStorage.setItem('wechat_user_info', JSON.stringify(userData));
+
+        // 发送到后端存储
+        fetch('/api/wechat/user', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            nickname: userData.nickname,
+            avatar: userData.avatar,
+            phoneNumber: userData.phoneNumber,
+            openid: userData.openid,
+            source: 'miniprogram',
+          }),
+        }).then((res) => {
+          if (res.ok) {
+            console.log('[Chat] 用户信息已保存到后端');
+          }
+        }).catch((err) => {
+          console.error('[Chat] 保存用户信息到后端失败:', err);
+        });
+      } catch (e) {
+        console.error('[Chat] 解析小程序用户信息失败:', e);
+      }
+    }
+
+    // 监听小程序 postMessage（如果需要）
+    if ((window as any).wx && (window as any).wx.miniProgram) {
+      // 小程序可以通过 postMessage 发送消息
+      // 这里可以监听消息，但目前主要通过 URL 参数传递
+      console.log('[Chat] 小程序环境已检测，支持 postMessage');
+    }
+  }, []);
 
   // 初始化NFC场景（通过URL参数）
   useEffect(() => {
@@ -212,14 +296,11 @@ export default function Chat() {
     }
 
     // 常规初始化（非NFC场景）- 只在首次加载时执行
+    // 使用 requestIdleCallback 拆分初始化任务，避免阻塞主线程
     if (!nfcInitialized && !point && !avatar && !question) {
       setNfcInitialized(true);
       
-      // 初始化语音识别和合成
-      speechRecognizerRef.current = new SpeechRecognizer();
-      speechSynthesizerRef.current = new SpeechSynthesizer();
-
-      // 添加欢迎消息
+      // 立即添加欢迎消息（关键内容优先）
       const welcomeMessage: Message = {
         id: '0',
         content: selectedCharacter.greeting,
@@ -228,16 +309,50 @@ export default function Chat() {
       };
       setMessages([welcomeMessage]);
 
-      // 获取快捷问题
-      const quickQuestions = getQuickQuestions();
-      if (quickQuestions.length > 0) {
-        setSmartRecommendations(
-          quickQuestions.slice(0, 3).map((q) => ({
-            question: q,
-            category: '快捷问题',
-          }))
-        );
-      }
+      // 使用 requestIdleCallback 延迟初始化非关键功能
+      const initNonCritical = () => {
+        // 初始化语音识别和合成（延迟加载）
+        if ('requestIdleCallback' in window) {
+          requestIdleCallback(() => {
+            speechRecognizerRef.current = new SpeechRecognizer();
+            speechSynthesizerRef.current = new SpeechSynthesizer();
+          }, { timeout: 1000 });
+        } else {
+          setTimeout(() => {
+            speechRecognizerRef.current = new SpeechRecognizer();
+            speechSynthesizerRef.current = new SpeechSynthesizer();
+          }, 500);
+        }
+
+        // 获取快捷问题（延迟加载）
+        if ('requestIdleCallback' in window) {
+          requestIdleCallback(() => {
+            const quickQuestions = getQuickQuestions();
+            if (quickQuestions.length > 0) {
+              setSmartRecommendations(
+                quickQuestions.slice(0, 3).map((q) => ({
+                  question: q,
+                  category: '快捷问题',
+                }))
+              );
+            }
+          }, { timeout: 1500 });
+        } else {
+          setTimeout(() => {
+            const quickQuestions = getQuickQuestions();
+            if (quickQuestions.length > 0) {
+              setSmartRecommendations(
+                quickQuestions.slice(0, 3).map((q) => ({
+                  question: q,
+                  category: '快捷问题',
+                }))
+              );
+            }
+          }, 800);
+        }
+      };
+
+      initNonCritical();
     }
   }, [location, selectedCharacter.greeting]); // location变化时重新执行，selectedCharacter.greeting用于常规初始化
 
@@ -254,38 +369,28 @@ export default function Chat() {
     }
   }, [messages]);
 
-  // 自动滚动到底部
+  // 自动滚动到底部 - 优化：使用 requestIdleCallback 避免阻塞
   useEffect(() => {
     const scrollToBottom = () => {
       const viewport = messageViewportRef.current;
       if (!viewport) return;
 
       const targetScrollTop = viewport.scrollHeight - viewport.clientHeight;
-
-      requestAnimationFrame(() => {
-        viewport.scrollTop = targetScrollTop < 0 ? 0 : targetScrollTop;
-        console.debug(
-          '[Chat] 自动滚动触发',
-          {
-            messageCount: visibleMessages.length,
-            scrollTop: viewport.scrollTop,
-            scrollHeight: viewport.scrollHeight,
-            clientHeight: viewport.clientHeight,
-          }
-        );
-      });
+      viewport.scrollTop = targetScrollTop < 0 ? 0 : targetScrollTop;
     };
 
-    // 使用多次 requestAnimationFrame 确保 DOM 完全更新
-    requestAnimationFrame(() => {
+    // 使用 requestIdleCallback 在空闲时滚动，避免阻塞主线程
+    if ('requestIdleCallback' in window) {
+      requestIdleCallback(() => {
+        requestAnimationFrame(scrollToBottom);
+      }, { timeout: 500 });
+    } else {
+      // 降级方案：使用 requestAnimationFrame
       requestAnimationFrame(() => {
-        scrollToBottom();
-        // 再延迟一次确保内容完全渲染
-        setTimeout(scrollToBottom, 100);
-        setTimeout(scrollToBottom, 300);
+        requestAnimationFrame(scrollToBottom);
       });
-    });
-  }, [visibleMessages, smartRecommendations]);
+    }
+  }, [visibleMessages.length]); // 只依赖消息数量，减少触发
 
   // 停止当前语音播放
   const stopCurrentSpeech = () => {
@@ -790,6 +895,8 @@ export default function Chat() {
             alt={selectedCharacter.name}
             className="w-12 h-12 rounded-full flex-shrink-0 object-cover border-2"
             style={{ borderColor: selectedCharacter.accentColor }}
+            loading="eager"
+            decoding="async"
           />
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
@@ -822,37 +929,51 @@ export default function Chat() {
             onClick={toggleVoice}
             className="rounded-full h-10 w-10"
             style={{ color: selectedCharacter.accentColor }}
+            aria-label={voiceEnabled ? '关闭语音播报' : '开启语音播报'}
+            title={voiceEnabled ? '关闭语音播报' : '开启语音播报'}
           >
             {voiceEnabled ? (
-              <Volume2 className="w-5 h-5" />
+              <Volume2 className="w-5 h-5" aria-hidden="true" />
             ) : (
-              <VolumeX className="w-5 h-5" />
+              <VolumeX className="w-5 h-5" aria-hidden="true" />
             )}
           </Button>
         </div>
       </div>
 
       {/* 主视觉：人物展示 - Lottie动画占满中间主体 */}
-      <div className="flex-1 relative overflow-hidden m-0 p-0">
-        <DotLottieReact
-          src={
-            isSpeaking
-              ? selectedCharacter.animations.speaking
-              : isThinking
-              ? selectedCharacter.animations.thinking
-              : isListening
-              ? selectedCharacter.animations.listening
-              : selectedCharacter.animations.idle
-          }
-          loop
-          autoplay
-          style={{ width: '100%', height: '100%', display: 'block' }}
-        />
+      <div className="flex-1 relative overflow-hidden m-0 p-0" style={{ willChange: 'contents' }}>
+        {useMemo(() => {
+          const animationSrc = isSpeaking
+            ? selectedCharacter.animations.speaking
+            : isThinking
+            ? selectedCharacter.animations.thinking
+            : isListening
+            ? selectedCharacter.animations.listening
+            : selectedCharacter.animations.idle;
+          
+          // 所有动画都延迟至少1秒加载，避免阻塞主线程
+          return (
+            <LazyLottie
+              src={animationSrc}
+              loop
+              autoplay
+              delay={isSpeaking || isThinking || isListening ? 1000 : 1200}
+              style={{ 
+                width: '100%', 
+                height: '100%', 
+                display: 'block',
+                willChange: 'transform',
+                contain: 'layout style paint',
+              }}
+            />
+          );
+        }, [isSpeaking, isThinking, isListening, selectedCharacter.animations])}
       </div>
 
       {/* 半透明固定消息区域 - 默认显示欢迎语和猜你想问 */}
       {visibleMessages.length > 0 && (
-        <div className="absolute bottom-24 left-0 right-0 max-h-[45vh] z-30 px-4 pb-2">
+        <div className="absolute bottom-14 left-0 right-0 max-h-[45vh] z-30 px-4 pb-2">
           <div className="bg-transparent rounded-2xl overflow-hidden max-w-2xl mx-auto">
             <div
               ref={messageViewportRef}
@@ -865,14 +986,14 @@ export default function Chat() {
                     key={message.id}
                     message={message}
                     accentColor={selectedCharacter.accentColor}
-                    accentBgColor={hexToRgba('#FFFFFF', 0.9)}
+                    accentBgColor={hexToRgba('#FFFFFF', 0.3)}
                     botAvatarUrl={selectedCharacter.avatar}
                   />
                 ))}
 
                 {/* 猜你想问 */}
                 {smartRecommendations.length > 0 && (
-                  <div className="mt-6 pt-4">
+                  <div className="mt-2 pt-2">
                     <p className="text-sm font-semibold text-gray-800 mb-3 drop-shadow-sm">
                       {visibleMessages.length <= 1 ? '快捷问题' : '猜你想问'}
                     </p>
@@ -882,6 +1003,7 @@ export default function Chat() {
                       style={{ 
                         borderColor: selectedCharacter.accentColor,
                       }}
+                      aria-label={`点击提问：${smartRecommendations[0].question}`}
                     >
                       {smartRecommendations[0].question}
                     </button>
@@ -927,8 +1049,10 @@ export default function Chat() {
             onTouchStart={handleTouchStart}
             onClick={handleClick}
             className={`rounded-full ${isListening ? 'bg-red-100 text-red-600' : ''}`}
+            aria-label={isListening ? '停止语音输入' : '开始语音输入'}
+            title={isListening ? '停止语音输入' : '开始语音输入'}
           >
-            <Mic className="w-5 h-5" />
+            <Mic className="w-5 h-5" aria-hidden="true" />
           </Button>
           <Button
             onClick={() => {
@@ -937,8 +1061,10 @@ export default function Chat() {
             }}
             className="rounded-full text-white hover:opacity-90 shadow-md"
             style={{ backgroundColor: selectedCharacter.accentColor }}
+            aria-label="发送消息"
+            title="发送消息"
           >
-            <Send className="w-5 h-5" />
+            <Send className="w-5 h-5" aria-hidden="true" />
           </Button>
         </div>
       </div>

@@ -21,7 +21,9 @@ const plugins = [
   react(), 
   tailwindcss(), 
   jsxLocPlugin(), 
-  vitePluginManusRuntime(),
+  // 暂时禁用 manus runtime 插件以减少内联脚本大小
+  // 如果必须使用，可以考虑延迟加载或外部化
+  // vitePluginManusRuntime(),
   // 启用HTTPS时添加SSL插件
   // 注意：basicSsl 使用自签名证书，浏览器会显示安全警告（这是正常的）
   // 首次访问时，点击"高级" → "继续访问"即可
@@ -45,6 +47,61 @@ export default defineConfig({
   build: {
     outDir: path.resolve(import.meta.dirname, "dist/public"),
     emptyOutDir: true,
+    // 代码分割优化
+    rollupOptions: {
+      output: {
+        // 手动代码分割
+        manualChunks: {
+          // React 相关库单独打包
+          'react-vendor': ['react', 'react-dom'],
+          // UI 组件库单独打包
+          'ui-vendor': ['@radix-ui/react-dialog', '@radix-ui/react-dropdown-menu', '@radix-ui/react-tooltip'],
+          // 动画库单独打包
+          'animation-vendor': ['@lottiefiles/dotlottie-react'],
+          // 工具库单独打包
+          'utils-vendor': ['wouter', 'sonner', 'clsx', 'tailwind-merge'],
+        },
+        // 优化 chunk 文件名
+        chunkFileNames: 'assets/js/[name]-[hash].js',
+        entryFileNames: 'assets/js/[name]-[hash].js',
+        assetFileNames: (assetInfo) => {
+          const info = assetInfo.name?.split('.') || [];
+          const ext = info[info.length - 1];
+          if (/\.(png|jpe?g|svg|gif|tiff|bmp|ico|webp)$/i.test(assetInfo.name || '')) {
+            return `assets/images/[name]-[hash][extname]`;
+          }
+          if (/\.(woff2?|eot|ttf|otf)$/i.test(assetInfo.name || '')) {
+            return `assets/fonts/[name]-[hash][extname]`;
+          }
+          return `assets/[ext]/[name]-[hash][extname]`;
+        },
+      },
+    },
+    // 压缩配置
+    minify: 'terser',
+    terserOptions: {
+      compress: {
+        drop_console: true, // 生产环境移除 console
+        drop_debugger: true,
+        pure_funcs: ['console.log', 'console.info', 'console.debug'], // 移除特定函数调用
+        passes: 2, // 多次压缩以获得更好的压缩率
+      },
+      format: {
+        comments: false, // 移除注释
+      },
+    },
+    // 启用 CSS 代码分割
+    cssCodeSplit: true,
+    // 提高 chunk 大小警告阈值（因为 Lottie 文件较大）
+    chunkSizeWarningLimit: 1000,
+    // 启用 sourcemap（生产环境可选）
+    sourcemap: false,
+    // 优化构建性能
+    target: 'esnext',
+    // 启用模块预加载提示
+    modulePreload: {
+      polyfill: true,
+    },
   },
   server: {
     port: 3001,

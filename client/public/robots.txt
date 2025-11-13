@@ -1,0 +1,19 @@
+# robots.txt for 电小虎智能助手
+# 允许所有搜索引擎抓取
+
+User-agent: *
+Allow: /
+
+# 禁止抓取 API 接口
+Disallow: /api/
+
+# 禁止抓取静态资源目录（可选，如果不需要 SEO）
+# Disallow: /avatars/
+# Disallow: /lottie/
+
+# 允许抓取主要页面
+Allow: /
+
+# Sitemap（如果有的话，取消注释并填写实际地址）
+# Sitemap: https://your-domain.com/sitemap.xml
+
