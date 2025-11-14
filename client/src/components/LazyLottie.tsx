@@ -9,6 +9,10 @@ const DotLottieReact = lazy(() =>
 interface LazyLottieProps extends DotLottieReactProps {
   fallback?: React.ReactNode;
   delay?: number; // 延迟加载时间（ms），用于避免阻塞主线程
+  speed?: number; // 播放速度倍数（如 1.5 表示 1.5 倍速）
+  loop?: boolean; // 是否循环播放
+  direction?: 1 | -1; // 播放方向：1 正向，-1 反向
+  segment?: [number, number]; // 播放区间 [起始帧, 结束帧]
 }
 
 // 加载占位符
@@ -79,10 +83,30 @@ const LazyLottie = memo(({ fallback, delay = 0, ...props }: LazyLottieProps) => 
   }, [delay]);
 
   return (
-    <div ref={containerRef} className="w-full h-full" style={{ willChange: 'contents' }}>
+    <div 
+      ref={containerRef} 
+      className="w-full h-full" 
+      style={{ 
+        willChange: 'contents',
+        // 启用硬件加速（对应 Android 的 LAYER_TYPE_HARDWARE）
+        transform: 'translateZ(0)',
+        backfaceVisibility: 'hidden',
+        perspective: 1000,
+      }}
+    >
       {shouldLoad ? (
         <Suspense fallback={fallback || <LottieFallback />}>
-          <DotLottieReact {...props} />
+          <DotLottieReact 
+            {...props}
+            // 如果提供了 speed，使用它；否则使用 props 中的 speed
+            speed={props.speed ?? 1}
+            // 如果提供了 loop，使用它；否则使用 props 中的 loop
+            loop={props.loop ?? true}
+            // 如果提供了 direction，使用它
+            direction={props.direction}
+            // 如果提供了 segment，使用它
+            segment={props.segment}
+          />
         </Suspense>
       ) : (
         fallback || <LottieFallback />

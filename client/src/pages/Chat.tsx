@@ -965,6 +965,9 @@ export default function Chat() {
                 display: 'block',
                 willChange: 'transform',
                 contain: 'layout style paint',
+                // 移动端自适应：确保动画按比例缩放
+                objectFit: 'contain',
+                objectPosition: 'center',
               }}
             />
           );

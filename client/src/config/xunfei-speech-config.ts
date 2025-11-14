@@ -10,24 +10,15 @@
 export const XUNFEI_SPEECH_CONFIG = {
   /**
    * 是否启用讯飞语音服务
-   * false 将使用百度语音服务或浏览器原生 API
+   * ⚠️ 必须设置为 true，因为已移除浏览器原生 API 支持
    */
   enabled: true,
   
   /**
-   * 讯飞 AppID
+   * ⚠️ 注意：前端不直接使用 API 密钥
+   * 所有语音请求都通过后端代理（/api/asr/xunfei 和 /api/tts/xunfei）
+   * API 密钥只在后端环境变量中配置（XUNFEI_APP_ID、XUNFEI_API_KEY、XUNFEI_API_SECRET）
    */
-  appId: '54c865b6',
-  
-  /**
-   * 讯飞 APIKey
-   */
-  apiKey: '1e71234d7970325c2adf493bced1dc26',
-  
-  /**
-   * 讯飞 APISecret
-   */
-  apiSecret: 'NDAxMDgxZjlhZWY4NGY0ZGIyNWY5YTVi',
   
   /**
    * 语音识别配置

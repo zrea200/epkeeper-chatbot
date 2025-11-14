@@ -5,32 +5,18 @@ import { fileURLToPath } from "url";
 import { readFileSync } from "fs";
 import crypto from "crypto";
 import { config } from "dotenv";
-import { createBaiduSpeechAPIFromEnv, BaiduSpeechAPI } from "./baidu-speech-api.js";
 import { createXunfeiSpeechAPIFromEnv, XunfeiSpeechAPI } from "./xunfei-speech-api.js";
-import { createOrUpdateUser, getUserByOpenid } from "./db/index.js";
-import { initDatabase } from "./db/init.js";
+// 数据库相关导入（可选，如果不需要存储数据可以移除）
+// import { createOrUpdateUser, getUserByOpenid } from "./db/index.js";
+// import { initDatabase } from "./db/init.js";
 
 // 加载 .env 文件
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 config({ path: path.resolve(__dirname, "..", ".env") });
 
-// 创建百度语音API实例（单例）
-let baiduSpeechAPI: BaiduSpeechAPI | null = null;
 // 创建讯飞语音API实例（单例）
 let xunfeiSpeechAPI: XunfeiSpeechAPI | null = null;
-
-function getBaiduSpeechAPI(): BaiduSpeechAPI {
-  if (!baiduSpeechAPI) {
-    try {
-      baiduSpeechAPI = createBaiduSpeechAPIFromEnv();
-    } catch (error: any) {
-      console.error("初始化百度语音API失败:", error.message);
-      throw error;
-    }
-  }
-  return baiduSpeechAPI;
-}
 
 function getXunfeiSpeechAPI(): XunfeiSpeechAPI {
   if (!xunfeiSpeechAPI) {
@@ -45,12 +31,18 @@ function getXunfeiSpeechAPI(): XunfeiSpeechAPI {
 }
 
 async function startServer() {
-  // 初始化数据库
-  try {
-    await initDatabase();
-  } catch (err) {
-    console.error('数据库初始化失败:', err);
-    console.error('请检查数据库配置和连接');
+  // 数据库初始化（可选，如果不需要存储数据可以跳过）
+  // 如果环境变量中配置了数据库，则初始化；否则跳过
+  if (process.env.DB_PASSWORD && process.env.ENABLE_DATABASE === 'true') {
+    try {
+      const { initDatabase } = await import("./db/init.js");
+      await initDatabase();
+      console.log('✅ 数据库已初始化');
+    } catch (err) {
+      console.warn('⚠️ 数据库初始化失败，继续运行（数据库为可选功能）:', err);
+    }
+  } else {
+    console.log('ℹ️ 数据库功能已禁用（ENABLE_DATABASE 未设置为 true）');
   }
 
   const app = express();
@@ -323,14 +315,28 @@ async function startServer() {
     }
   });
 
-  // 微信小程序用户信息存储接口
+  // 微信小程序用户信息存储接口（可选功能，需要数据库支持）
   app.post("/api/wechat/user", async (req, res) => {
     console.log(`[WECHAT] 收到用户信息存储请求: ${req.method} ${req.path}`, {
       hasBody: !!req.body,
       bodyKeys: req.body ? Object.keys(req.body) : [],
     });
 
+    // 如果数据库未启用，直接返回成功（不存储数据）
+    if (process.env.ENABLE_DATABASE !== 'true') {
+      console.log('[WECHAT] 数据库功能未启用，跳过用户信息存储');
+      res.json({
+        success: true,
+        message: "用户信息已接收（数据库功能未启用，未存储）",
+        data: {
+          openid: req.body?.openid,
+        },
+      });
+      return;
+    }
+
     try {
+      const { createOrUpdateUser } = await import("./db/index.js");
       const { nickname, avatar, phoneNumber, openid, source } = req.body || {};
 
       // 验证必要字段：必须有 openid
@@ -378,175 +384,6 @@ async function startServer() {
     }
   });
 
-  // 代理获取百度 Access Token，绕过微信 WebView 的网络限制
-  app.get("/api/baidu/token", async (req, res) => {
-    console.log(`[TOKEN] 收到Token请求: ${req.method} ${req.path}`, {
-      query: req.query,
-      hasApiKey: !!req.query.apiKey || !!process.env.BAIDU_API_KEY,
-      hasSecretKey: !!req.query.secretKey || !!process.env.BAIDU_SECRET_KEY
-    });
-    try {
-      const apiKey = (req.query.apiKey as string) || process.env.BAIDU_API_KEY || "";
-      const secretKey = (req.query.secretKey as string) || process.env.BAIDU_SECRET_KEY || "";
-
-      if (!apiKey || !secretKey) {
-        res.status(400).json({ error: "missing_config", error_description: "缺少 API Key 或 Secret Key" });
-        return;
-      }
-
-      const url = `https://aip.baidubce.com/oauth/2.0/token?grant_type=client_credentials&client_id=${encodeURIComponent(apiKey)}&client_secret=${encodeURIComponent(secretKey)}`;
-
-      const upstream = await fetch(url, { method: "GET" });
-      const text = await upstream.text();
-
-      res.status(upstream.status);
-      res.setHeader("Content-Type", "application/json; charset=utf-8");
-      res.send(text);
-    } catch (err: any) {
-      res.status(502).json({ error: "proxy_failed", error_description: err?.message || "代理调用失败" });
-    }
-  });
-
-  // 接收音频并由服务端调用百度语音识别
-  app.post("/api/asr/baidu", async (req, res) => {
-    const startTime = Date.now();
-    console.log(`[ASR] 收到语音识别请求: ${req.method} ${req.path}`, {
-      hasBody: !!req.body,
-      bodyKeys: req.body ? Object.keys(req.body) : [],
-      contentType: req.headers['content-type'],
-      userAgent: req.headers['user-agent']?.substring(0, 50)
-    });
-
-    try {
-      const { base64, format = "wav", rate = 16000, channel = 1, language = "zh", apiKey: bodyApiKey, secretKey: bodySecretKey } = req.body || {};
-      
-      console.log(`[ASR] 解析请求参数:`, {
-        hasBase64: !!base64,
-        base64Length: base64 ? base64.length : 0,
-        format,
-        rate,
-        channel,
-        language,
-        hasApiKeyInBody: !!bodyApiKey,
-        hasSecretKeyInBody: !!bodySecretKey
-      });
-      
-      if (!base64) {
-        console.error("[ASR] 缺少音频数据");
-        res.status(400).json({ error: "missing_audio", error_description: "缺少音频 base64" });
-        return;
-      }
-
-      // 检查API配置：优先使用请求体中的，然后是查询参数，最后是环境变量
-      const apiKey = bodyApiKey || (req.query.apiKey as string) || process.env.BAIDU_API_KEY || "";
-      const secretKey = bodySecretKey || (req.query.secretKey as string) || process.env.BAIDU_SECRET_KEY || "";
-      
-      console.log(`[ASR] 检查API配置:`, {
-        hasApiKey: !!apiKey,
-        hasSecretKey: !!secretKey,
-        apiKeyFromBody: !!bodyApiKey,
-        apiKeyFromQuery: !!(req.query.apiKey as string),
-        apiKeyFromEnv: !!process.env.BAIDU_API_KEY,
-        secretKeyFromBody: !!bodySecretKey,
-        secretKeyFromQuery: !!(req.query.secretKey as string),
-        secretKeyFromEnv: !!process.env.BAIDU_SECRET_KEY
-      });
-      
-      if (!apiKey || !secretKey) {
-        console.error("[ASR] 缺少 API Key 或 Secret Key");
-        res.status(400).json({ error: "missing_config", error_description: "缺少 API Key 或 Secret Key" });
-        return;
-      }
-
-      // 如果实例不存在或配置变化，重新创建
-      if (!baiduSpeechAPI) {
-        baiduSpeechAPI = new BaiduSpeechAPI({
-          apiKey,
-          secretKey,
-          cuid: "epkeeper-chatbot",
-        });
-      }
-
-      // 解析 base64 音频数据
-      const base64Data = base64.replace(/^data:[^,]*,/, "");
-      const audioBuffer = Buffer.from(base64Data, "base64");
-
-      // 根据 language 确定 devPid（1537=普通话，1737=英语）
-      const devPid = language === "en" ? 1737 : 1537;
-
-      // 调用语音识别API（包含QPS控制和自动重试）
-      console.log(`[ASR] 开始调用百度API，音频大小: ${audioBuffer.length} bytes`);
-      const text = await baiduSpeechAPI.speechToText(
-        audioBuffer,
-        format as "pcm" | "wav" | "amr" | "m4a",
-        rate,
-        devPid
-      );
-
-      const duration = Date.now() - startTime;
-      console.log(`[ASR] 识别成功，耗时: ${duration}ms，结果: ${text.substring(0, 50)}`);
-      res.json({ text, success: true });
-    } catch (err: any) {
-      const duration = Date.now() - startTime;
-      console.error(`[ASR] 语音识别失败，耗时: ${duration}ms`, {
-        error: err?.message,
-        stack: err?.stack?.substring(0, 200),
-        name: err?.name
-      });
-      res.status(502).json({
-        error: "asr_failed",
-        error_description: err?.message || "识别调用失败",
-      });
-    }
-  });
-
-  // 语音合成接口（TTS）
-  app.post("/api/tts/baidu", async (req, res) => {
-    try {
-      const { text, spd, pit, vol, per, apiKey: bodyApiKey, secretKey: bodySecretKey } = req.body || {};
-      if (!text || typeof text !== "string") {
-        res.status(400).json({ error: "missing_text", error_description: "缺少文本内容" });
-        return;
-      }
-
-      // 检查API配置：优先使用请求体中的，然后是查询参数，最后是环境变量
-      const apiKey = bodyApiKey || (req.query.apiKey as string) || process.env.BAIDU_API_KEY || "";
-      const secretKey = bodySecretKey || (req.query.secretKey as string) || process.env.BAIDU_SECRET_KEY || "";
-      if (!apiKey || !secretKey) {
-        res.status(400).json({ error: "missing_config", error_description: "缺少 API Key 或 Secret Key" });
-        return;
-      }
-
-      // 如果实例不存在或配置变化，重新创建
-      if (!baiduSpeechAPI) {
-        baiduSpeechAPI = new BaiduSpeechAPI({
-          apiKey,
-          secretKey,
-          cuid: "epkeeper-chatbot",
-        });
-      }
-
-      // 调用语音合成API（包含QPS控制和自动重试）
-      const audioBuffer = await baiduSpeechAPI.textToSpeech(text, {
-        spd: spd ?? 5,
-        pit: pit ?? 5,
-        vol: vol ?? 5,
-        per: per ?? 0,
-      });
-
-      // 返回音频数据
-      res.setHeader("Content-Type", "audio/mpeg");
-      res.setHeader("Content-Length", audioBuffer.length.toString());
-      res.send(audioBuffer);
-    } catch (err: any) {
-      console.error("语音合成失败:", err);
-      res.status(502).json({
-        error: "tts_failed",
-        error_description: err?.message || "合成调用失败",
-      });
-    }
-  });
-
   // 讯飞语音识别接口（ASR）
   app.post("/api/asr/xunfei", async (req, res) => {
     const startTime = Date.now();
@@ -565,14 +402,14 @@ async function startServer() {
         return;
       }
 
-      // 检查API配置：优先使用环境变量，如果没有则使用配置文件中的值（开发用）
-      const appId = process.env.XUNFEI_APP_ID || "54c865b6";
-      const apiKey = process.env.XUNFEI_API_KEY || "1e71234d7970325c2adf493bced1dc26";
-      const apiSecret = process.env.XUNFEI_API_SECRET || "NDAxMDgxZjlhZWY4NGY0ZGIyNWY5YTVi";
+      // 从环境变量读取 API 配置（生产环境必须配置）
+      const appId = process.env.XUNFEI_APP_ID;
+      const apiKey = process.env.XUNFEI_API_KEY;
+      const apiSecret = process.env.XUNFEI_API_SECRET;
       
       if (!appId || !apiKey || !apiSecret) {
-        console.error("[ASR-Xunfei] 缺少 API 配置");
-        res.status(400).json({ error: "missing_config", error_description: "缺少讯飞 API 配置（AppID、APIKey、APISecret）" });
+        console.error("[ASR-Xunfei] 缺少 API 配置，请设置环境变量 XUNFEI_APP_ID、XUNFEI_API_KEY、XUNFEI_API_SECRET");
+        res.status(400).json({ error: "missing_config", error_description: "缺少讯飞 API 配置（AppID、APIKey、APISecret），请检查环境变量" });
         return;
       }
 
@@ -623,13 +460,14 @@ async function startServer() {
         return;
       }
 
-      // 检查API配置：优先使用环境变量，如果没有则使用配置文件中的值（开发用）
-      const appId = process.env.XUNFEI_APP_ID || "54c865b6";
-      const apiKey = process.env.XUNFEI_API_KEY || "1e71234d7970325c2adf493bced1dc26";
-      const apiSecret = process.env.XUNFEI_API_SECRET || "NDAxMDgxZjlhZWY4NGY0ZGIyNWY5YTVi";
+      // 从环境变量读取 API 配置（生产环境必须配置）
+      const appId = process.env.XUNFEI_APP_ID;
+      const apiKey = process.env.XUNFEI_API_KEY;
+      const apiSecret = process.env.XUNFEI_API_SECRET;
       
       if (!appId || !apiKey || !apiSecret) {
-        res.status(400).json({ error: "missing_config", error_description: "缺少讯飞 API 配置（AppID、APIKey、APISecret）" });
+        console.error("[TTS-Xunfei] 缺少 API 配置，请设置环境变量 XUNFEI_APP_ID、XUNFEI_API_KEY、XUNFEI_API_SECRET");
+        res.status(400).json({ error: "missing_config", error_description: "缺少讯飞 API 配置（AppID、APIKey、APISecret），请检查环境变量" });
         return;
       }
 

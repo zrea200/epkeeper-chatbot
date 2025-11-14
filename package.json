@@ -11,7 +11,13 @@
     "start": "NODE_ENV=production node dist/index.js",
     "preview": "vite preview --host",
     "check": "tsc --noEmit",
-    "format": "prettier --write ."
+    "format": "prettier --write .",
+    "optimize:lottie": "tsx scripts/optimize-lottie.ts",
+    "check:cdn": "tsx scripts/check-cdn-images.ts",
+    "deploy:dev": "docker-compose -f docker-compose.dev.yml up -d",
+    "deploy:prod": "docker-compose up -d --build",
+    "deploy:blue-green": "docker-compose -f docker-compose.blue-green.yml up -d green",
+    "deploy:canary": "docker-compose -f docker-compose.canary.yml up -d canary"
   },
   "dependencies": {
     "@lottiefiles/dotlottie-react": "^0.17.6",

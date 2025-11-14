@@ -1,0 +1,75 @@
+# 金丝雀发布配置
+# 使用方式：
+#   1. 启动金丝雀版本：docker-compose -f docker-compose.canary.yml up -d canary
+#   2. 配置负载均衡器：10% 流量到 canary，90% 到 stable
+#   3. 监控金丝雀版本性能
+#   4. 逐步增加流量或回滚
+
+version: '3.8'
+
+services:
+  # 稳定版本（生产环境）
+  stable:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: epkeeper-chatbot-stable
+    restart: unless-stopped
+    ports:
+      - "51872:3000"  # 稳定版本端口
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - XUNFEI_APP_ID=${XUNFEI_APP_ID}
+      - XUNFEI_API_KEY=${XUNFEI_API_KEY}
+      - XUNFEI_API_SECRET=${XUNFEI_API_SECRET}
+      - ENABLE_DATABASE=${ENABLE_DATABASE:-false}
+      - CDN_BASE_URL=${CDN_BASE_URL}
+      - WECHAT_APPID=${WECHAT_APPID}
+      - WECHAT_APPSECRET=${WECHAT_APPSECRET}
+    networks:
+      - app-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.stable.rule=Host(`your-domain.com`)"
+      - "traefik.http.routers.stable.entrypoints=web"
+      - "traefik.http.services.stable.loadbalancer.server.port=3000"
+      - "traefik.http.services.stable.loadbalancer.weight=90"  # 90% 流量
+
+  # 金丝雀版本（新版本，小流量测试）
+  canary:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      # 可以指定不同的构建参数或标签
+      # args:
+      #   - VERSION=canary
+    container_name: epkeeper-chatbot-canary
+    restart: unless-stopped
+    ports:
+      - "51874:3000"  # 金丝雀版本端口
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - XUNFEI_APP_ID=${XUNFEI_APP_ID}
+      - XUNFEI_API_KEY=${XUNFEI_API_KEY}
+      - XUNFEI_API_SECRET=${XUNFEI_API_SECRET}
+      - ENABLE_DATABASE=${ENABLE_DATABASE:-false}
+      - CDN_BASE_URL=${CDN_BASE_URL}
+      - WECHAT_APPID=${WECHAT_APPID}
+      - WECHAT_APPSECRET=${WECHAT_APPSECRET}
+      # 金丝雀版本可以启用额外日志
+      - LOG_LEVEL=debug
+    networks:
+      - app-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.canary.rule=Host(`your-domain.com`)"
+      - "traefik.http.routers.canary.entrypoints=web"
+      - "traefik.http.services.canary.loadbalancer.server.port=3000"
+      - "traefik.http.services.canary.loadbalancer.weight=10"  # 10% 流量
+
+networks:
+  app-network:
+    driver: bridge
+

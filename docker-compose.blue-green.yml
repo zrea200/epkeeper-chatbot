@@ -1,0 +1,68 @@
+# 蓝绿部署配置
+# 使用方式：
+#   1. 启动绿色环境：docker-compose -f docker-compose.blue-green.yml up -d green
+#   2. 测试绿色环境：curl http://localhost:51873/api/health
+#   3. 切换流量到绿色：更新负载均衡器配置
+#   4. 停止蓝色环境：docker-compose -f docker-compose.blue-green.yml stop blue
+
+version: '3.8'
+
+services:
+  # 蓝色环境（当前生产环境）
+  blue:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: epkeeper-chatbot-blue
+    restart: unless-stopped
+    ports:
+      - "51872:3000"  # 蓝色环境端口
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - XUNFEI_APP_ID=${XUNFEI_APP_ID}
+      - XUNFEI_API_KEY=${XUNFEI_API_KEY}
+      - XUNFEI_API_SECRET=${XUNFEI_API_SECRET}
+      - ENABLE_DATABASE=${ENABLE_DATABASE:-false}
+      - CDN_BASE_URL=${CDN_BASE_URL}
+      - WECHAT_APPID=${WECHAT_APPID}
+      - WECHAT_APPSECRET=${WECHAT_APPSECRET}
+    networks:
+      - app-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.blue.rule=Host(`your-domain.com`) && Header(`X-Deployment`, `blue`)"
+      - "traefik.http.routers.blue.entrypoints=web"
+      - "traefik.http.services.blue.loadbalancer.server.port=3000"
+
+  # 绿色环境（新版本）
+  green:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: epkeeper-chatbot-green
+    restart: unless-stopped
+    ports:
+      - "51873:3000"  # 绿色环境端口（不同端口）
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - XUNFEI_APP_ID=${XUNFEI_APP_ID}
+      - XUNFEI_API_KEY=${XUNFEI_API_KEY}
+      - XUNFEI_API_SECRET=${XUNFEI_API_SECRET}
+      - ENABLE_DATABASE=${ENABLE_DATABASE:-false}
+      - CDN_BASE_URL=${CDN_BASE_URL}
+      - WECHAT_APPID=${WECHAT_APPID}
+      - WECHAT_APPSECRET=${WECHAT_APPSECRET}
+    networks:
+      - app-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.green.rule=Host(`your-domain.com`) && Header(`X-Deployment`, `green`)"
+      - "traefik.http.routers.green.entrypoints=web"
+      - "traefik.http.services.green.loadbalancer.server.port=3000"
+
+networks:
+  app-network:
+    driver: bridge
+
