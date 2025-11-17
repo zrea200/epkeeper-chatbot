@@ -31,7 +31,7 @@ export const characters: Character[] = [
       speaking: '/lottie2/2-speak.lottie',
       thinking: '/lottie2/2-think.lottie',
       listening: '/lottie2/2-liste.lottie',
-      idle: '/avatars/2-idle.jpeg',
+      idle: '/avatars/Asset2.png',
     },
   },
   {
@@ -47,8 +47,8 @@ export const characters: Character[] = [
     animations: {
       speaking: '/lottie2/1-speak.lottie',
       thinking: '/lottie2/1-think.lottie',
-      listening: '/lottie2/1-liste.lottie',
-      idle: '/avatars/1-idle.jpeg',
+      listening: '/lottie2/1-listening.lottie',
+      idle: '/avatars/Asset1.png', 
     },
   },
 ];

@@ -223,6 +223,14 @@ const LazyLottie = memo(({ fallback, delay = 0, src, scale, ...props }: LazyLott
 
   // 判断文件格式
   const isJsonFormat = typeof src === 'string' && src.endsWith('.json');
+  const isImageFormat = typeof src === 'string' && (
+    src.endsWith('.jpeg') || 
+    src.endsWith('.jpg') || 
+    src.endsWith('.png') || 
+    src.endsWith('.gif') || 
+    src.endsWith('.webp') || 
+    src.endsWith('.svg')
+  );
 
   useEffect(() => {
     // 如果 delay 为 0，立即加载；否则延迟加载
@@ -424,6 +432,48 @@ const LazyLottie = memo(({ fallback, delay = 0, src, scale, ...props }: LazyLott
       setJsonLoaded(false);
     };
   }, [shouldLoad, isJsonFormat, src, props.loop, props.autoplay]);
+
+  // 如果是图片格式，直接显示图片
+  if (isImageFormat) {
+    const imageScale = props.scale ?? 1;
+    const imageScaleStyle = imageScale !== 1 ? {
+      transform: `scale(${imageScale})`,
+      transformOrigin: 'center center',
+    } : {};
+    
+    return (
+      <div 
+        className="w-full h-full flex items-center justify-center"
+        style={{ position: 'relative', backgroundColor: '#FFFFFF' }}
+      >
+        <img
+          src={src}
+          alt="Character animation"
+          style={{
+            width: '100%',
+            height: '100%',
+            objectFit: 'contain',
+            ...imageScaleStyle,
+          }}
+          onLoad={() => {
+            console.log('[LazyLottie] 图片加载完成:', src);
+          }}
+          onError={(e) => {
+            console.error('[LazyLottie] 图片加载失败:', src);
+            // 如果图片加载失败，显示 fallback
+            const target = e.target as HTMLImageElement;
+            if (target.parentElement) {
+              target.parentElement.innerHTML = '';
+              const fallbackDiv = document.createElement('div');
+              fallbackDiv.className = 'w-full h-full flex items-center justify-center';
+              fallbackDiv.innerHTML = '<div class="text-sm text-gray-500">图片加载失败</div>';
+              target.parentElement.appendChild(fallbackDiv);
+            }
+          }}
+        />
+      </div>
+    );
+  }
 
   return (
     <div 

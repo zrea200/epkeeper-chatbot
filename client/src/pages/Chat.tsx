@@ -455,7 +455,7 @@ export default function Chat() {
             }
 
             // 延迟显示文字，给语音合成一些时间
-            setTimeout(() => {
+            setTimeout(async () => {
               setMessages((prev) => [...prev, assistantMessage]);
               setIsThinking(false);
 
@@ -1021,7 +1021,7 @@ export default function Chat() {
               loop
               autoplay
               delay={0}
-              scale={selectedCharacter.id === 'escort' ? 0.8 : 1}
+              scale={selectedCharacter.id === 'escort' ? 1 : 1}
               style={{ 
                 width: '100%', 
                 height: '100%', 
