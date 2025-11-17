@@ -3,12 +3,9 @@ import { createServer } from "http";
 import path from "path";
 import { fileURLToPath } from "url";
 import { readFileSync } from "fs";
-import crypto from "crypto";
 import { config } from "dotenv";
+import compression from "compression";
 import { createXunfeiSpeechAPIFromEnv, XunfeiSpeechAPI } from "./xunfei-speech-api.js";
-// 数据库相关导入（可选，如果不需要存储数据可以移除）
-// import { createOrUpdateUser, getUserByOpenid } from "./db/index.js";
-// import { initDatabase } from "./db/init.js";
 
 // 加载 .env 文件
 const __filename = fileURLToPath(import.meta.url);
@@ -31,20 +28,6 @@ function getXunfeiSpeechAPI(): XunfeiSpeechAPI {
 }
 
 async function startServer() {
-  // 数据库初始化（可选，如果不需要存储数据可以跳过）
-  // 如果环境变量中配置了数据库，则初始化；否则跳过
-  if (process.env.DB_PASSWORD && process.env.ENABLE_DATABASE === 'true') {
-    try {
-      const { initDatabase } = await import("./db/init.js");
-      await initDatabase();
-      console.log('✅ 数据库已初始化');
-    } catch (err) {
-      console.warn('⚠️ 数据库初始化失败，继续运行（数据库为可选功能）:', err);
-    }
-  } else {
-    console.log('ℹ️ 数据库功能已禁用（ENABLE_DATABASE 未设置为 true）');
-  }
-
   const app = express();
   const server = createServer(app);
 
@@ -71,6 +54,21 @@ async function startServer() {
     }
     next();
   });
+
+  // Gzip 压缩中间件（在路由之前注册，优化静态资源传输）
+  // 对 JSON、HTML、CSS、JS 等文本资源进行压缩，可减少 60-70% 的传输大小
+  app.use(compression({
+    filter: (req, res) => {
+      // 如果请求头中明确表示不接受压缩，则不压缩
+      if (req.headers['x-no-compression']) {
+        return false;
+      }
+      // 使用默认的压缩过滤器
+      return compression.filter(req, res);
+    },
+    level: 6, // 压缩级别 1-9，6 是平衡性能和压缩率的推荐值
+    threshold: 1024, // 只压缩大于 1KB 的响应
+  }));
 
   // JSON 解析中间件（需要在路由之前注册）
   app.use(express.json({ limit: "10mb" }));
@@ -211,179 +209,6 @@ async function startServer() {
     }
   });
 
-  // 微信小程序登录接口（通过 code 换取 session_key 和 openid）
-  app.post("/api/wechat/login", async (req, res) => {
-    console.log(`[WECHAT] 收到登录请求: ${req.method} ${req.path}`);
-
-    try {
-      const { code } = req.body || {};
-
-      if (!code) {
-        res.status(400).json({
-          error: "missing_code",
-          error_description: "缺少 code 参数",
-        });
-        return;
-      }
-
-      const appId = process.env.WECHAT_APPID;
-      const appSecret = process.env.WECHAT_APPSECRET;
-
-      if (!appId || !appSecret) {
-        res.status(500).json({
-          error: "missing_config",
-          error_description: "服务器未配置微信小程序 AppID 或 AppSecret",
-        });
-        return;
-      }
-
-      // 调用微信接口换取 session_key 和 openid
-      const url = `https://api.weixin.qq.com/sns/jscode2session?appid=${appId}&secret=${appSecret}&js_code=${code}&grant_type=authorization_code`;
-      
-      const response = await fetch(url);
-      const data = await response.json();
-
-      if (data.errcode) {
-        console.error('[WECHAT] 登录失败:', data);
-        res.status(400).json({
-          error: "login_failed",
-          error_description: data.errmsg || "登录失败",
-        });
-        return;
-      }
-
-      console.log('[WECHAT] 登录成功:', {
-        openid: data.openid,
-        hasSessionKey: !!data.session_key,
-      });
-
-      res.json({
-        success: true,
-        data: {
-          openid: data.openid,
-          session_key: data.session_key,
-        },
-      });
-    } catch (err: any) {
-      console.error("微信登录错误:", err);
-      res.status(500).json({
-        error: "server_error",
-        error_description: err?.message || "服务器内部错误",
-      });
-    }
-  });
-
-  // 微信小程序手机号解密接口
-  app.post("/api/wechat/decrypt-phone", async (req, res) => {
-    console.log(`[WECHAT] 收到手机号解密请求: ${req.method} ${req.path}`);
-
-    try {
-      const { encryptedData, iv, sessionKey } = req.body || {};
-
-      if (!encryptedData || !iv || !sessionKey) {
-        res.status(400).json({
-          error: "missing_params",
-          error_description: "缺少必要参数：encryptedData、iv、sessionKey",
-        });
-        return;
-      }
-
-      // 解密手机号
-      const decipher = crypto.createDecipheriv('aes-128-cbc', Buffer.from(sessionKey, 'base64'), Buffer.from(iv, 'base64'));
-      let decrypted = decipher.update(encryptedData, 'base64', 'utf8');
-      decrypted += decipher.final('utf8');
-      
-      const phoneData = JSON.parse(decrypted);
-      const phoneNumber = phoneData.phoneNumber;
-
-      console.log('[WECHAT] 手机号解密成功:', {
-        hasPhoneNumber: !!phoneNumber,
-      });
-
-      res.json({
-        success: true,
-        data: {
-          phoneNumber: phoneNumber,
-        },
-      });
-    } catch (err: any) {
-      console.error("手机号解密错误:", err);
-      res.status(500).json({
-        error: "decrypt_failed",
-        error_description: err?.message || "解密失败",
-      });
-    }
-  });
-
-  // 微信小程序用户信息存储接口（可选功能，需要数据库支持）
-  app.post("/api/wechat/user", async (req, res) => {
-    console.log(`[WECHAT] 收到用户信息存储请求: ${req.method} ${req.path}`, {
-      hasBody: !!req.body,
-      bodyKeys: req.body ? Object.keys(req.body) : [],
-    });
-
-    // 如果数据库未启用，直接返回成功（不存储数据）
-    if (process.env.ENABLE_DATABASE !== 'true') {
-      console.log('[WECHAT] 数据库功能未启用，跳过用户信息存储');
-      res.json({
-        success: true,
-        message: "用户信息已接收（数据库功能未启用，未存储）",
-        data: {
-          openid: req.body?.openid,
-        },
-      });
-      return;
-    }
-
-    try {
-      const { createOrUpdateUser } = await import("./db/index.js");
-      const { nickname, avatar, phoneNumber, openid, source } = req.body || {};
-
-      // 验证必要字段：必须有 openid
-      if (!openid) {
-        res.status(400).json({
-          error: "missing_params",
-          error_description: "缺少必要参数：openid",
-        });
-        return;
-      }
-
-      // 存储到数据库
-      const user = await createOrUpdateUser({
-        openid,
-        nickname: nickname || undefined,
-        avatar: avatar || undefined,
-        phone_number: phoneNumber || undefined,
-        source: source || 'miniprogram',
-      });
-
-      console.log('[WECHAT] 用户信息已保存到数据库:', {
-        id: user.id,
-        openid: user.openid,
-        nickname: user.nickname,
-        hasAvatar: !!user.avatar,
-        hasPhoneNumber: !!user.phone_number,
-      });
-
-      res.json({
-        success: true,
-        message: "用户信息保存成功",
-        data: {
-          id: user.id,
-          openid: user.openid,
-          nickname: user.nickname,
-          hasPhoneNumber: !!user.phone_number,
-        },
-      });
-    } catch (err: any) {
-      console.error("微信用户信息存储错误:", err);
-      res.status(500).json({
-        error: "server_error",
-        error_description: err?.message || "服务器内部错误",
-      });
-    }
-  });
-
   // 讯飞语音识别接口（ASR）
   app.post("/api/asr/xunfei", async (req, res) => {
     const startTime = Date.now();
@@ -403,14 +228,23 @@ async function startServer() {
       }
 
       // 从环境变量读取 API 配置（生产环境必须配置）
+      // ⚠️ 注意：如果遇到鉴权失败，可能是 API_KEY 和 API_SECRET 的值需要交换
+      // 工作版本 (e92e84a) 中这两个值在环境变量和代码默认值中都是反的，但能正常工作
       const appId = process.env.XUNFEI_APP_ID;
-      const apiKey = process.env.XUNFEI_API_KEY;
-      const apiSecret = process.env.XUNFEI_API_SECRET;
+      let apiKey = process.env.XUNFEI_API_KEY;
+      let apiSecret = process.env.XUNFEI_API_SECRET;
       
       if (!appId || !apiKey || !apiSecret) {
         console.error("[ASR-Xunfei] 缺少 API 配置，请设置环境变量 XUNFEI_APP_ID、XUNFEI_API_KEY、XUNFEI_API_SECRET");
         res.status(400).json({ error: "missing_config", error_description: "缺少讯飞 API 配置（AppID、APIKey、APISecret），请检查环境变量" });
         return;
+      }
+
+      // 如果设置了环境变量 XUNFEI_SWAP_KEYS=true，则交换 API_KEY 和 API_SECRET
+      // 这用于调试：如果遇到鉴权失败，可以尝试交换这两个值
+      if (process.env.XUNFEI_SWAP_KEYS === 'true') {
+        console.warn("[ASR-Xunfei] 检测到 XUNFEI_SWAP_KEYS=true，交换 API_KEY 和 API_SECRET");
+        [apiKey, apiSecret] = [apiSecret, apiKey];
       }
 
       // 如果实例不存在或配置变化，重新创建
@@ -461,14 +295,23 @@ async function startServer() {
       }
 
       // 从环境变量读取 API 配置（生产环境必须配置）
+      // ⚠️ 注意：如果遇到鉴权失败，可能是 API_KEY 和 API_SECRET 的值需要交换
+      // 工作版本 (e92e84a) 中这两个值在环境变量和代码默认值中都是反的，但能正常工作
       const appId = process.env.XUNFEI_APP_ID;
-      const apiKey = process.env.XUNFEI_API_KEY;
-      const apiSecret = process.env.XUNFEI_API_SECRET;
+      let apiKey = process.env.XUNFEI_API_KEY;
+      let apiSecret = process.env.XUNFEI_API_SECRET;
       
       if (!appId || !apiKey || !apiSecret) {
         console.error("[TTS-Xunfei] 缺少 API 配置，请设置环境变量 XUNFEI_APP_ID、XUNFEI_API_KEY、XUNFEI_API_SECRET");
         res.status(400).json({ error: "missing_config", error_description: "缺少讯飞 API 配置（AppID、APIKey、APISecret），请检查环境变量" });
         return;
+      }
+
+      // 如果设置了环境变量 XUNFEI_SWAP_KEYS=true，则交换 API_KEY 和 API_SECRET
+      // 这用于调试：如果遇到鉴权失败，可以尝试交换这两个值
+      if (process.env.XUNFEI_SWAP_KEYS === 'true') {
+        console.warn("[TTS-Xunfei] 检测到 XUNFEI_SWAP_KEYS=true，交换 API_KEY 和 API_SECRET");
+        [apiKey, apiSecret] = [apiSecret, apiKey];
       }
 
       // 如果实例不存在或配置变化，重新创建
@@ -519,17 +362,20 @@ async function startServer() {
 
   // 注册静态文件服务（Express会自动跳过已匹配的API路由）
   // 添加缓存头优化性能
+  // 注意：compression 中间件需要在 express.static 之前注册才能压缩静态文件
   app.use(express.static(staticPath, {
     maxAge: process.env.NODE_ENV === 'production' ? '1y' : '0', // 生产环境缓存1年
     etag: true,
     lastModified: true,
     setHeaders: (res, path) => {
       // 对带 hash 的资源设置长期缓存
-      if (path.match(/\.[a-f0-9]{8,}\.(js|css|png|jpg|jpeg|gif|svg|woff|woff2|ttf|eot|json)$/i)) {
+      if (path.match(/\.[a-f0-9]{8,}\.(js|css|png|jpg|jpeg|gif|svg|woff|woff2|ttf|eot|json|lottie)$/i)) {
         res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
-      } else if (path.match(/\.(js|css|png|jpg|jpeg|gif|svg|woff|woff2|ttf|eot|json)$/i)) {
+      } else if (path.match(/\.(js|css|png|jpg|jpeg|gif|svg|woff|woff2|ttf|eot|json|lottie)$/i)) {
         res.setHeader('Cache-Control', 'public, max-age=86400'); // 1天
       }
+      // 不设置 Content-Length，让 compression 中间件处理压缩
+      // 如果设置了 Content-Length，compression 可能无法压缩
     },
   }));
 

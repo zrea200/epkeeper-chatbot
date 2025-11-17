@@ -504,6 +504,7 @@ export class XunfeiSpeechSynthesizer {
   private audio: HTMLAudioElement | null = null;
   private isSpeaking: boolean = false;
   private currentAudioUrl: string | null = null;
+  private currentSpeakId: number = 0; // 用于跟踪当前 speak 操作的 ID
 
   /**
    * 播报文本（支持角色音色）
@@ -516,8 +517,11 @@ export class XunfeiSpeechSynthesizer {
       onError?: (error: any) => void;
     }
   ) {
-    // 停止当前播报
+    // 停止当前播报（包括正在播放和正在加载的音频）
     this.stop();
+    
+    // 生成新的 speak ID，用于跟踪当前操作
+    const speakId = ++this.currentSpeakId;
 
     try {
       const browserInfo = getBrowserInfo();
@@ -541,9 +545,16 @@ export class XunfeiSpeechSynthesizer {
 
       // 通过服务端代理调用讯飞API
       const audioBlob = await this.speakViaProxy(text, voiceConfig);
+      
+      // 检查是否已被新的 speak 调用取消
+      if (speakId !== this.currentSpeakId) {
+        console.log('⚠️ 语音合成被新的请求取消');
+        return;
+      }
+      
       console.log('✅ 语音合成成功（讯飞），音频大小:', `${(audioBlob.size / 1024).toFixed(2)} KB`);
 
-      // 清理之前的 URL 对象
+      // 清理之前的 URL 对象（如果有）
       if (this.currentAudioUrl) {
         URL.revokeObjectURL(this.currentAudioUrl);
       }
@@ -555,6 +566,12 @@ export class XunfeiSpeechSynthesizer {
       
       // 等待音频加载完成
       await new Promise<void>((resolve, reject) => {
+        // 再次检查是否已被取消
+        if (speakId !== this.currentSpeakId) {
+          reject(new Error('语音加载被取消'));
+          return;
+        }
+        
         if (!this.audio) {
           reject(new Error('音频元素未创建'));
           return;
@@ -565,6 +582,12 @@ export class XunfeiSpeechSynthesizer {
         }, 10000);
 
         this.audio!.onloadeddata = () => {
+          // 检查是否已被取消
+          if (speakId !== this.currentSpeakId) {
+            clearTimeout(timeout);
+            reject(new Error('语音加载被取消'));
+            return;
+          }
           clearTimeout(timeout);
           console.log('✅ 语音加载完成');
           resolve();
@@ -578,43 +601,72 @@ export class XunfeiSpeechSynthesizer {
         };
 
         if (this.audio.readyState >= 2) {
+          // 检查是否已被取消
+          if (speakId !== this.currentSpeakId) {
+            clearTimeout(timeout);
+            reject(new Error('语音加载被取消'));
+            return;
+          }
           clearTimeout(timeout);
           resolve();
         }
       });
+      
+      // 检查是否已被新的 speak 调用取消
+      if (speakId !== this.currentSpeakId) {
+        console.log('⚠️ 语音播放被新的请求取消');
+        this.stop();
+        return;
+      }
 
       // 清理 URL 对象（播放完成后）
       this.audio.onended = () => {
-        this.isSpeaking = false;
-        console.log('✅ 语音播放完成');
-        if (this.currentAudioUrl) {
-          URL.revokeObjectURL(this.currentAudioUrl);
-          this.currentAudioUrl = null;
+        // 只有当前 speak 操作对应的音频才处理结束事件
+        if (speakId === this.currentSpeakId) {
+          this.isSpeaking = false;
+          console.log('✅ 语音播放完成');
+          if (this.currentAudioUrl) {
+            URL.revokeObjectURL(this.currentAudioUrl);
+            this.currentAudioUrl = null;
+          }
+          options?.onEnd?.();
         }
-        options?.onEnd?.();
       };
 
       this.audio.onplay = () => {
-        this.isSpeaking = true;
-        console.log('▶️ 语音开始播放');
+        // 只有当前 speak 操作对应的音频才设置播放状态
+        if (speakId === this.currentSpeakId) {
+          this.isSpeaking = true;
+          console.log('▶️ 语音开始播放');
+        }
       };
 
       this.audio.onerror = (event) => {
-        this.isSpeaking = false;
-        const error = this.audio?.error;
-        const errorMsg = error 
-          ? `播放错误: ${error.code} - ${error.message}`
-          : '音频播放失败';
-        console.error('❌ 语音播放失败:', {
-          event,
-          error: errorMsg,
-        });
-        if (this.currentAudioUrl) {
-          URL.revokeObjectURL(this.currentAudioUrl);
-          this.currentAudioUrl = null;
+        // 只有当前 speak 操作对应的音频才处理错误
+        if (speakId === this.currentSpeakId) {
+          this.isSpeaking = false;
+          const error = this.audio?.error;
+          const errorMsg = error 
+            ? `播放错误: ${error.code} - ${error.message}`
+            : '音频播放失败';
+          console.error('❌ 语音播放失败:', {
+            event,
+            error: errorMsg,
+          });
+          if (this.currentAudioUrl) {
+            URL.revokeObjectURL(this.currentAudioUrl);
+            this.currentAudioUrl = null;
+          }
+          options?.onError?.(new Error(errorMsg));
         }
-        options?.onError?.(new Error(errorMsg));
       };
+
+      // 检查是否已被新的 speak 调用取消
+      if (speakId !== this.currentSpeakId) {
+        console.log('⚠️ 语音播放被新的请求取消');
+        this.stop();
+        return;
+      }
 
       // 尝试播放音频
       try {
@@ -622,6 +674,14 @@ export class XunfeiSpeechSynthesizer {
         if (playPromise !== undefined) {
           await playPromise;
         }
+        
+        // 再次检查是否已被取消
+        if (speakId !== this.currentSpeakId) {
+          console.log('⚠️ 语音播放被新的请求取消');
+          this.stop();
+          return;
+        }
+        
         console.log('✅ 语音播放已启动');
       } catch (playError: any) {
         // 如果是自动播放策略错误，静默处理（这是正常的浏览器行为）
@@ -695,9 +755,16 @@ export class XunfeiSpeechSynthesizer {
    * 停止播报
    */
   stop() {
+    // 增加 speakId，使任何正在进行的 speak 操作知道已被取消
+    this.currentSpeakId++;
+    
     if (this.audio) {
-      this.audio.pause();
-      this.audio.currentTime = 0;
+      try {
+        this.audio.pause();
+        this.audio.currentTime = 0;
+      } catch (e) {
+        // 忽略暂停错误（可能音频已被清理）
+      }
       // 移除所有事件监听器，避免内存泄漏
       this.audio.onended = null;
       this.audio.onerror = null;

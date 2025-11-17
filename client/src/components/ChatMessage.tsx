@@ -1,4 +1,5 @@
 import { memo } from 'react';
+import type React from 'react';
 import { cn } from '@/lib/utils';
 import { Spinner } from '@/components/ui/spinner';
 
@@ -63,14 +64,20 @@ const ChatMessage = memo(function ChatMessage({
                 textShadow: '0 1px 2px rgba(0, 0, 0, 0.1)',
                 backdropFilter: 'blur(12px)',
                 WebkitBackdropFilter: 'blur(12px)',
-              }
+                // 确保毛玻璃效果生效
+                isolation: 'isolate',
+                position: 'relative',
+              } as React.CSSProperties
             : { 
                 backgroundColor: accentColor ? hexToRgba(accentColor, 0.3) : 'rgba(0, 0, 0, 0.3)', 
                 borderColor: accentColor,
                 backdropFilter: 'blur(12px)',
                 WebkitBackdropFilter: 'blur(12px)',
                 boxShadow: '0 2px 8px rgba(0, 0, 0, 0.1)',
-              }
+                // 确保毛玻璃效果生效
+                isolation: 'isolate',
+                position: 'relative',
+              } as React.CSSProperties
         }
       >
         {isThinking ? (

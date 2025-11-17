@@ -107,13 +107,26 @@ export default defineConfig({
     port: 3001,
     strictPort: true, // 端口被占用时直接报错，避免自动改端口
     host: true,
-    // 代理 API 请求到后端服务器（开发环境）
-    proxy: {
-      '/api': {
-        target: 'http://localhost:3000',
-        changeOrigin: true,
-        secure: false,
-      },
+      // 代理 API 请求到后端服务器（开发环境）
+      proxy: {
+        '/api': {
+          target: 'http://localhost:3000',
+          changeOrigin: true,
+          secure: false,
+        },
+        // 注意：/lottie 路径不再代理到后端，由 Vite 开发服务器直接提供 client/public/lottie/ 下的文件
+        // 生产环境下由后端服务器提供静态文件
+      // 如果配置了 CDN，代理 Lottie 图片请求到 CDN
+      ...(process.env.VITE_CDN_BASE_URL && process.env.VITE_CDN_BASE_URL.startsWith('http')
+        ? {
+            '/lottie/images': {
+              target: process.env.VITE_CDN_BASE_URL.replace(/\/images.*$/, ''),
+              changeOrigin: true,
+              secure: true,
+              rewrite: (path: string) => path.replace(/^\/lottie/, ''),
+            },
+          }
+        : {}),
     },
     // HTTPS 由 basicSsl 插件自动处理（开发环境启用插件时）
     // 生产环境不加载插件，使用 HTTP（由 Caddy 处理 HTTPS）
@@ -130,6 +143,20 @@ export default defineConfig({
     fs: {
       strict: true,
       deny: ["**/.*"],
+    },
+  },
+  // preview 模式配置（用于预览生产构建）
+  preview: {
+    port: 3001,
+    strictPort: true,
+    host: true,
+    // preview 模式也需要代理 API 请求到后端服务器
+    proxy: {
+      '/api': {
+        target: 'http://localhost:3000',
+        changeOrigin: true,
+        secure: false,
+      },
     },
   },
 });

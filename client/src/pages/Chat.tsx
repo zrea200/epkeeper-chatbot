@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
+import type React from 'react';
 import { useLocation } from 'wouter';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -147,27 +148,6 @@ export default function Chat() {
 
         // 存储到 localStorage
         localStorage.setItem('wechat_user_info', JSON.stringify(userData));
-
-        // 发送到后端存储
-        fetch('/api/wechat/user', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            nickname: userData.nickname,
-            avatar: userData.avatar,
-            phoneNumber: userData.phoneNumber,
-            openid: userData.openid,
-            source: 'miniprogram',
-          }),
-        }).then((res) => {
-          if (res.ok) {
-            console.log('[Chat] 用户信息已保存到后端');
-          }
-        }).catch((err) => {
-          console.error('[Chat] 保存用户信息到后端失败:', err);
-        });
       } catch (e) {
         console.error('[Chat] 解析小程序用户信息失败:', e);
       }
@@ -312,16 +292,35 @@ export default function Chat() {
       // 使用 requestIdleCallback 延迟初始化非关键功能
       const initNonCritical = () => {
         // 初始化语音识别和合成（延迟加载）
-        if ('requestIdleCallback' in window) {
-          requestIdleCallback(() => {
-            speechRecognizerRef.current = new SpeechRecognizer();
-            speechSynthesizerRef.current = new SpeechSynthesizer();
-          }, { timeout: 1000 });
-        } else {
+        const initSpeech = () => {
+          speechRecognizerRef.current = new SpeechRecognizer();
+          speechSynthesizerRef.current = new SpeechSynthesizer();
+          
+          // 语音合成器初始化完成后，播报欢迎语
           setTimeout(() => {
-            speechRecognizerRef.current = new SpeechRecognizer();
-            speechSynthesizerRef.current = new SpeechSynthesizer();
-          }, 500);
+            if (voiceEnabled && speechSynthesizerRef.current) {
+              setIsSpeaking(true);
+              speechSynthesizerRef.current.speak(selectedCharacter.greeting, {
+                characterId: selectedCharacter.id,
+                onEnd: () => {
+                  setIsSpeaking(false);
+                },
+                onError: (error) => {
+                  console.error('欢迎语语音播报失败:', error);
+                  setIsSpeaking(false);
+                },
+              }).catch((error) => {
+                console.error('欢迎语语音播报调用失败:', error);
+                setIsSpeaking(false);
+              });
+            }
+          }, 500); // 延迟500ms确保合成器已完全初始化
+        };
+        
+        if ('requestIdleCallback' in window) {
+          requestIdleCallback(initSpeech, { timeout: 1000 });
+        } else {
+          setTimeout(initSpeech, 500);
         }
 
         // 获取快捷问题（延迟加载）
@@ -437,55 +436,10 @@ export default function Chat() {
               timestamp: new Date(),
             };
 
-            setMessages((prev) => [...prev, assistantMessage]);
-            setIsThinking(false);
-
-            // 更新问题索引并获取推荐问题
-            let updatedIndex = currentNFCQuestionIndex;
-            try {
-              const nfcDataRes = await fetch(`/api/nfc-data?point=${nfcContext.point}&avatar=${encodeURIComponent(nfcContext.avatar)}`);
-              if (nfcDataRes.ok) {
-                const nfcData = await nfcDataRes.json();
-                if (nfcData.pointData && nfcData.pointData.questions) {
-                  const normalizeQuestion = (q: string) => {
-                    return q.replace(/[，。？！、；：\s]/g, '').toLowerCase().trim();
-                  };
-                  const normalizedInput = normalizeQuestion(text);
-                  const questionIndex = nfcData.pointData.questions.findIndex(
-                    (q: any) => {
-                      const normalizedQ = normalizeQuestion(q.question);
-                      return q.question === text || normalizedQ === normalizedInput;
-                    }
-                  );
-                  if (questionIndex !== -1) {
-                    updatedIndex = questionIndex;
-                    setCurrentNFCQuestionIndex(questionIndex);
-                  }
-                }
-              }
-            } catch (err) {
-              console.error('[Chat] 获取NFC问题索引失败:', err);
-            }
-
-            // 更新推荐问题（使用更新后的索引）
-            getNFCRecommendations(nfcContext.point, nfcContext.avatar, updatedIndex)
-              .then((recResult) => {
-                if (recResult.question) {
-                  setCurrentNFCQuestionIndex(recResult.nextIndex);
-                  setSmartRecommendations([{
-                    question: recResult.question,
-                    category: '猜你想问',
-                  }]);
-                }
-              })
-              .catch((err) => {
-                console.error('[Chat] 获取NFC推荐问题失败:', err);
-              });
-
-            // 语音播报
+            // 立即开始语音合成（在文字显示之前）
             if (voiceEnabled && speechSynthesizerRef.current) {
               setIsSpeaking(true);
-              speechSynthesizerRef.current.speak(assistantMessage.content, {
+              speechSynthesizerRef.current.speak(result.answer, {
                 characterId: selectedCharacter.id,
                 onEnd: () => {
                   setIsSpeaking(false);
@@ -499,6 +453,54 @@ export default function Chat() {
                 setIsSpeaking(false);
               });
             }
+
+            // 延迟显示文字，给语音合成一些时间
+            setTimeout(() => {
+              setMessages((prev) => [...prev, assistantMessage]);
+              setIsThinking(false);
+
+              // 更新问题索引并获取推荐问题
+              let updatedIndex = currentNFCQuestionIndex;
+              try {
+                const nfcDataRes = await fetch(`/api/nfc-data?point=${nfcContext.point}&avatar=${encodeURIComponent(nfcContext.avatar)}`);
+                if (nfcDataRes.ok) {
+                  const nfcData = await nfcDataRes.json();
+                  if (nfcData.pointData && nfcData.pointData.questions) {
+                    const normalizeQuestion = (q: string) => {
+                      return q.replace(/[，。？！、；：\s]/g, '').toLowerCase().trim();
+                    };
+                    const normalizedInput = normalizeQuestion(text);
+                    const questionIndex = nfcData.pointData.questions.findIndex(
+                      (q: any) => {
+                        const normalizedQ = normalizeQuestion(q.question);
+                        return q.question === text || normalizedQ === normalizedInput;
+                      }
+                    );
+                    if (questionIndex !== -1) {
+                      updatedIndex = questionIndex;
+                      setCurrentNFCQuestionIndex(questionIndex);
+                    }
+                  }
+                }
+              } catch (err) {
+                console.error('[Chat] 获取NFC问题索引失败:', err);
+              }
+
+              // 更新推荐问题（使用更新后的索引）
+              getNFCRecommendations(nfcContext.point, nfcContext.avatar, updatedIndex)
+                .then((recResult) => {
+                  if (recResult.question) {
+                    setCurrentNFCQuestionIndex(recResult.nextIndex);
+                    setSmartRecommendations([{
+                      question: recResult.question,
+                      category: '猜你想问',
+                    }]);
+                  }
+                })
+                .catch((err) => {
+                  console.error('[Chat] 获取NFC推荐问题失败:', err);
+                });
+            }, 100);
             return; // NFC场景找到答案，直接返回
           } else {
             // NFC数据中没有找到答案，继续后续流程（检查qa-database或调用AI）
@@ -517,6 +519,31 @@ export default function Chat() {
     handleNonNFCAnswer(text);
   };
 
+  // 获取最近的问题列表（用于避免重复推荐）
+  const getRecentQuestions = (): string[] => {
+    const recentQuestions: string[] = [];
+    
+    // 获取最近5条用户消息的问题
+    const userMessages = messages.filter(m => m.type === 'user').slice(-5);
+    userMessages.forEach(msg => {
+      if (msg.content.trim()) {
+        recentQuestions.push(msg.content.trim());
+      }
+    });
+    
+    // 获取最近推荐过的问题
+    if (smartRecommendations.length > 0) {
+      smartRecommendations.forEach(rec => {
+        if (rec.question.trim() && !recentQuestions.includes(rec.question.trim())) {
+          recentQuestions.push(rec.question.trim());
+        }
+      });
+    }
+    
+    // 限制最多5个问题
+    return recentQuestions.slice(-5);
+  };
+
   // 处理非NFC场景的答案查找（qa-database匹配或AI调用）
   const handleNonNFCAnswer = (text: string) => {
     // 无论来源如何，先尝试精确匹配数据库中的标准问题
@@ -525,14 +552,34 @@ export default function Chat() {
     
     if (exactMatch) {
       // 精确匹配到数据库中的问题，直接返回答案，不走后端
-      setTimeout(() => {
-        const assistantMessage: Message = {
-          id: (Date.now() + 1).toString(),
-          content: exactMatch.answer,
-          type: 'bot',
-          timestamp: new Date(),
-        };
+      const assistantMessage: Message = {
+        id: (Date.now() + 1).toString(),
+        content: exactMatch.answer,
+        type: 'bot',
+        timestamp: new Date(),
+      };
 
+      // 立即开始语音合成（在文字显示之前），减少等待时间
+      if (voiceEnabled && speechSynthesizerRef.current) {
+        setIsSpeaking(true);
+        // 提前开始语音合成，不等待文字显示
+        speechSynthesizerRef.current.speak(exactMatch.answer, {
+          characterId: selectedCharacter.id,
+          onEnd: () => {
+            setIsSpeaking(false);
+          },
+          onError: (error) => {
+            console.error('语音播报失败:', error);
+            setIsSpeaking(false);
+          },
+        }).catch((error) => {
+          console.error('语音播报调用失败:', error);
+          setIsSpeaking(false);
+        });
+      }
+
+      // 延迟显示文字，给语音合成一些时间
+      setTimeout(() => {
         setMessages((prev) => [...prev, assistantMessage]);
         setIsThinking(false);
 
@@ -553,32 +600,15 @@ export default function Chat() {
             });
         } else {
           // 常规场景：获取智能推荐
+          const recentQuestions = getRecentQuestions();
           const recommendations = getSmartRecommendations(
             text,
             assistantMessage.content,
-            messages.map((m) => m.content)
+            recentQuestions
           );
           setSmartRecommendations(recommendations);
         }
-
-        // 语音播报
-        if (voiceEnabled && speechSynthesizerRef.current) {
-          setIsSpeaking(true);
-          speechSynthesizerRef.current.speak(assistantMessage.content, {
-            characterId: selectedCharacter.id,
-            onEnd: () => {
-              setIsSpeaking(false);
-            },
-            onError: (error) => {
-              console.error('语音播报失败:', error);
-              setIsSpeaking(false);
-            },
-          }).catch((error) => {
-            console.error('语音播报调用失败:', error);
-            setIsSpeaking(false);
-          });
-        }
-      }, 300); // 本地匹配响应更快，减少延迟
+      }, 100); // 减少延迟，让文字更快显示
       return;
     }
 
@@ -586,14 +616,33 @@ export default function Chat() {
 
     // 本地未匹配到，且 AI 功能未启用，返回兜底回复
     if (!AI_CONFIG.enabled) {
-      setTimeout(() => {
-        const assistantMessage: Message = {
-          id: (Date.now() + 1).toString(),
-          content: getFallbackResponse(),
-          type: 'bot',
-          timestamp: new Date(),
-        };
+      const fallbackContent = getFallbackResponse();
+      const assistantMessage: Message = {
+        id: (Date.now() + 1).toString(),
+        content: fallbackContent,
+        type: 'bot',
+        timestamp: new Date(),
+      };
 
+      // 立即开始语音合成（在文字显示之前）
+      if (voiceEnabled && speechSynthesizerRef.current) {
+        setIsSpeaking(true);
+        speechSynthesizerRef.current.speak(fallbackContent, {
+          characterId: selectedCharacter.id,
+          onEnd: () => {
+            setIsSpeaking(false);
+          },
+          onError: (error) => {
+            console.error('语音播报失败:', error);
+            setIsSpeaking(false);
+          },
+        }).catch((error) => {
+          console.error('语音播报调用失败:', error);
+          setIsSpeaking(false);
+        });
+      }
+
+      setTimeout(() => {
         setMessages((prev) => [...prev, assistantMessage]);
         setIsThinking(false);
 
@@ -614,32 +663,15 @@ export default function Chat() {
             });
         } else {
           // 常规场景：获取智能推荐
+          const recentQuestions = getRecentQuestions();
           const recommendations = getSmartRecommendations(
             text,
             assistantMessage.content,
-            messages.map((m) => m.content)
+            recentQuestions
           );
           setSmartRecommendations(recommendations);
         }
-
-        // 语音播报
-        if (voiceEnabled && speechSynthesizerRef.current) {
-          setIsSpeaking(true);
-          speechSynthesizerRef.current.speak(assistantMessage.content, {
-            characterId: selectedCharacter.id,
-            onEnd: () => {
-              setIsSpeaking(false);
-            },
-            onError: (error) => {
-              console.error('语音播报失败:', error);
-              setIsSpeaking(false);
-            },
-          }).catch((error) => {
-            console.error('语音播报调用失败:', error);
-            setIsSpeaking(false);
-          });
-        }
-      }, 800);
+      }, 200);
       return;
     }
 
@@ -658,6 +690,7 @@ export default function Chat() {
 
     // 用于累积完整回复内容（用于智能推荐和语音播报）
     let fullResponse = '';
+    let speechStartedRef = { current: false }; // 使用对象引用跟踪是否已开始语音合成
 
     // 调用 AI 流式接口（默认不启用打字机效果，避免页面抖动）
     getAIResponseStream(
@@ -666,7 +699,6 @@ export default function Chat() {
       // 收到数据块时的回调（chunk 是累积的完整文本）
       (chunk: string) => {
         setIsThinking(false);
-        setIsSpeaking(true);
         fullResponse = chunk; // 直接使用传入的完整文本
         
         // 更新消息内容（使用函数式更新，避免依赖 messages）
@@ -677,11 +709,35 @@ export default function Chat() {
               : msg
           )
         );
+
+        // 当内容达到一定长度（100个字符）时，提前开始语音合成
+        // 这样可以减少等待时间，让语音和文字更同步
+        if (!speechStartedRef.current && voiceEnabled && speechSynthesizerRef.current && chunk.length >= 100) {
+          speechStartedRef.current = true;
+          setIsSpeaking(true);
+          // 使用当前内容开始语音合成（即使内容还在更新）
+          // 这样可以提前开始，减少等待时间
+          speechSynthesizerRef.current.speak(chunk, {
+            characterId: selectedCharacter.id,
+            onEnd: () => {
+              setIsSpeaking(false);
+            },
+            onError: (error) => {
+              console.error('语音播报失败:', error);
+              setIsSpeaking(false);
+            },
+          }).catch((error) => {
+            console.error('语音播报调用失败:', error);
+            setIsSpeaking(false);
+          });
+        } else if (chunk.length > 0 && !speechStartedRef.current) {
+          // 内容开始出现，设置 speaking 状态让动画显示
+          setIsSpeaking(true);
+        }
       },
       // 完成时的回调
       () => {
         setIsThinking(false);
-        setIsSpeaking(false);
 
         // NFC场景：更新推荐问题为NFC推荐问题
         if (nfcContext) {
@@ -700,31 +756,35 @@ export default function Chat() {
             });
         } else {
           // 常规场景：获取智能推荐
+          const recentQuestions = getRecentQuestions();
           const recommendations = getSmartRecommendations(
             text,
             fullResponse,
-            messages.map((m) => m.content)
+            recentQuestions
           );
           setSmartRecommendations(recommendations);
         }
 
-          // 语音播报完整内容
-          if (voiceEnabled && speechSynthesizerRef.current && fullResponse) {
-            setIsSpeaking(true);
-            speechSynthesizerRef.current.speak(fullResponse, {
-              characterId: selectedCharacter.id,
-              onEnd: () => {
-                setIsSpeaking(false);
-              },
-              onError: (error) => {
-                console.error('语音播报失败:', error);
-                setIsSpeaking(false);
-              },
-            }).catch((error) => {
-              console.error('语音播报调用失败:', error);
+        // 如果之前没有开始语音合成（内容少于100字符），现在使用完整内容开始
+        if (voiceEnabled && speechSynthesizerRef.current && fullResponse && !speechStartedRef.current) {
+          setIsSpeaking(true);
+          speechSynthesizerRef.current.speak(fullResponse, {
+            characterId: selectedCharacter.id,
+            onEnd: () => {
               setIsSpeaking(false);
-            });
-          }
+            },
+            onError: (error) => {
+              console.error('语音播报失败:', error);
+              setIsSpeaking(false);
+            },
+          }).catch((error) => {
+            console.error('语音播报调用失败:', error);
+            setIsSpeaking(false);
+          });
+        } else if (!speechStartedRef.current) {
+          // 如果没有内容或语音已禁用，取消 speaking 状态
+          setIsSpeaking(false);
+        }
       },
       // 错误时的回调
       (error: Error) => {
@@ -942,7 +1002,7 @@ export default function Chat() {
       </div>
 
       {/* 主视觉：人物展示 - Lottie动画占满中间主体 */}
-      <div className="flex-1 relative overflow-hidden m-0 p-0" style={{ willChange: 'contents' }}>
+      <div className="flex-1 relative overflow-hidden m-0 p-0" style={{ willChange: 'contents', backgroundColor: '#FFFFFF' }}>
         {useMemo(() => {
           const animationSrc = isSpeaking
             ? selectedCharacter.animations.speaking
@@ -952,32 +1012,43 @@ export default function Chat() {
             ? selectedCharacter.animations.listening
             : selectedCharacter.animations.idle;
           
-          // 所有动画都延迟至少1秒加载，避免阻塞主线程
+          // 动画立即响应状态变化，无延迟
+          // 电小二动画缩放为 80%
           return (
             <LazyLottie
+              key={`${selectedCharacter.id}-${animationSrc}`}
               src={animationSrc}
               loop
               autoplay
-              delay={isSpeaking || isThinking || isListening ? 1000 : 1200}
+              delay={0}
+              scale={selectedCharacter.id === 'escort' ? 0.8 : 1}
               style={{ 
                 width: '100%', 
                 height: '100%', 
                 display: 'block',
                 willChange: 'transform',
-                contain: 'layout style paint',
-                // 移动端自适应：确保动画按比例缩放
-                objectFit: 'contain',
-                objectPosition: 'center',
               }}
             />
           );
-        }, [isSpeaking, isThinking, isListening, selectedCharacter.animations])}
+        }, [isSpeaking, isThinking, isListening, selectedCharacter.animations, selectedCharacter.id])}
       </div>
 
       {/* 半透明固定消息区域 - 默认显示欢迎语和猜你想问 */}
       {visibleMessages.length > 0 && (
         <div className="absolute bottom-14 left-0 right-0 max-h-[45vh] z-30 px-4 pb-2">
-          <div className="bg-transparent rounded-2xl overflow-hidden max-w-2xl mx-auto">
+          {/* 背景层：确保 backdrop-filter 有内容可以模糊 */}
+          <div 
+            className="absolute inset-0 rounded-2xl max-w-2xl mx-auto"
+            style={{
+              background: `linear-gradient(to bottom, ${hexToRgba(selectedCharacter.accentColor, 0.05)}, ${selectedCharacter.bgColor})`,
+              backdropFilter: 'blur(8px)',
+              WebkitBackdropFilter: 'blur(8px)',
+              // 确保毛玻璃效果生效
+              isolation: 'isolate',
+              position: 'relative',
+            } as React.CSSProperties}
+          />
+          <div className="relative bg-transparent rounded-2xl overflow-hidden max-w-2xl mx-auto">
             <div
               ref={messageViewportRef}
               className="max-h-[45vh] overflow-y-auto scroll-smooth [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]"
@@ -1005,7 +1076,12 @@ export default function Chat() {
                       className="w-full p-3 text-left bg-white/90 backdrop-blur-sm rounded-lg border transition-all text-sm text-gray-700 hover:text-gray-900 hover:opacity-90 shadow-sm"
                       style={{ 
                         borderColor: selectedCharacter.accentColor,
-                      }}
+                        backdropFilter: 'blur(8px)',
+                        WebkitBackdropFilter: 'blur(8px)',
+                        // 确保毛玻璃效果生效
+                        isolation: 'isolate',
+                        position: 'relative',
+                      } as React.CSSProperties}
                       aria-label={`点击提问：${smartRecommendations[0].question}`}
                     >
                       {smartRecommendations[0].question}
