@@ -10,6 +10,7 @@ interface LazyLottieProps extends DotLottieReactProps {
   fallback?: React.ReactNode;
   delay?: number; // 延迟加载时间（ms），用于避免阻塞主线程
   scale?: number; // 缩放比例，例如 0.5 表示缩小到 50%，1.5 表示放大到 150%
+  fallbackImage?: string; // 静态图片路径，在动画加载过程中显示
 }
 
 // 加载占位符
@@ -20,9 +21,10 @@ const LottieFallback = () => (
 );
 
 // DotLottieReact 包装组件，添加错误处理和加载检测
-const DotLottieReactWrapper = ({ src, ...props }: DotLottieReactProps) => {
+const DotLottieReactWrapper = ({ src, fallbackImage, scale, ...props }: DotLottieReactProps & { fallbackImage?: string; scale?: number }) => {
   const [error, setError] = useState<string | null>(null);
   const [isLoaded, setIsLoaded] = useState(false);
+  const [isImageVisible, setIsImageVisible] = useState(true); // 图片可见性
   const containerRef = useRef<HTMLDivElement>(null);
   const dotLottieRef = useRef<any>(null);
   const checkIntervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -32,6 +34,7 @@ const DotLottieReactWrapper = ({ src, ...props }: DotLottieReactProps) => {
       console.log('[LazyLottie] 加载 .lottie 文件:', src);
       setError(null);
       setIsLoaded(false);
+      setIsImageVisible(true); // 重置图片显示状态，src 变化时重新显示图片
     }
   }, [src]);
 
@@ -44,6 +47,10 @@ const DotLottieReactWrapper = ({ src, ...props }: DotLottieReactProps) => {
       const onPlay = () => {
         console.log('[LazyLottie] DotLottieReact 动画开始播放');
         setIsLoaded(true);
+        // 延迟隐藏图片，确保动画已显示
+        setTimeout(() => {
+          setIsImageVisible(false);
+        }, 50);
         if (checkIntervalRef.current) {
           clearInterval(checkIntervalRef.current);
           checkIntervalRef.current = null;
@@ -53,6 +60,10 @@ const DotLottieReactWrapper = ({ src, ...props }: DotLottieReactProps) => {
       const onReady = () => {
         console.log('[LazyLottie] DotLottieReact 动画就绪');
         setIsLoaded(true);
+        // 延迟隐藏图片，确保动画已显示
+        setTimeout(() => {
+          setIsImageVisible(false);
+        }, 50);
         if (checkIntervalRef.current) {
           clearInterval(checkIntervalRef.current);
           checkIntervalRef.current = null;
@@ -106,6 +117,10 @@ const DotLottieReactWrapper = ({ src, ...props }: DotLottieReactProps) => {
               if (hasContent) {
                 console.log('[LazyLottie] DotLottieReact Canvas 检测到内容，动画已加载');
                 setIsLoaded(true);
+                // 延迟隐藏图片，确保动画已显示
+                setTimeout(() => {
+                  setIsImageVisible(false);
+                }, 50);
                 if (checkIntervalRef.current) {
                   clearInterval(checkIntervalRef.current);
                   checkIntervalRef.current = null;
@@ -138,6 +153,7 @@ const DotLottieReactWrapper = ({ src, ...props }: DotLottieReactProps) => {
           if (checkCount > 30) {
             console.warn('[LazyLottie] DotLottieReact 检测超时，强制标记为已加载');
             setIsLoaded(true);
+            setIsImageVisible(false);
           }
         }
       }, 100);
@@ -163,41 +179,86 @@ const DotLottieReactWrapper = ({ src, ...props }: DotLottieReactProps) => {
 
   try {
     // 计算缩放样式
-    const scale = props.scale ?? 1;
-    const scaleStyle = scale !== 1 ? {
-      transform: `scale(${scale})`,
+    const animationScale = scale ?? 1;
+    const scaleStyle = animationScale !== 1 ? {
+      transform: `scale(${animationScale})`,
       transformOrigin: 'center center',
     } : {};
 
     return (
       <div ref={containerRef} className="w-full h-full" style={{ position: 'relative', backgroundColor: '#FFFFFF' }}>
-        <DotLottieReact 
-          src={src} 
-          loop={props.loop !== false}
-          autoplay={props.autoplay !== false}
-          style={{ 
-            width: '100%', 
+        {/* 静态图片层 - 在动画加载过程中显示 */}
+        {fallbackImage && (
+          <img
+            src={fallbackImage}
+            alt="Character fallback"
+            style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              width: '100%',
+              height: '100%',
+              objectFit: 'contain',
+              opacity: isImageVisible ? 1 : 0,
+              transition: 'opacity 300ms ease-out',
+              zIndex: 1, // 图片始终在底层
+              pointerEvents: isImageVisible ? 'auto' : 'none', // 隐藏时禁用交互
+              ...scaleStyle,
+            }}
+            onLoad={() => {
+              console.log('[LazyLottie] 静态图片加载完成:', fallbackImage);
+            }}
+            onError={(e) => {
+              console.error('[LazyLottie] 静态图片加载失败:', fallbackImage);
+            }}
+          />
+        )}
+        {/* 动画层 */}
+        <div
+          style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            width: '100%',
             height: '100%',
-            ...scaleStyle,
+            opacity: isLoaded ? 1 : 0,
+            transition: 'opacity 300ms ease-out',
+            zIndex: 2, // 动画始终在图片上层
+            pointerEvents: isLoaded ? 'auto' : 'none',
           }}
-          renderConfig={props.renderConfig || {
-            devicePixelRatio: window.devicePixelRatio || 1,
-            autoResize: true,
-          }}
-          dotLottieRefCallback={handleDotLottieRef}
-          onError={(err: any) => {
-            console.error('[LazyLottie] DotLottieReact 错误:', err);
-            setError(err?.message || '未知错误');
-          }}
-          onLoad={() => {
-            console.log('[LazyLottie] DotLottieReact onLoad 回调触发');
-            setIsLoaded(true);
-            if (checkIntervalRef.current) {
-              clearInterval(checkIntervalRef.current);
-              checkIntervalRef.current = null;
-            }
-          }}
-        />
+        >
+          <DotLottieReact 
+            src={src} 
+            loop={props.loop !== false}
+            autoplay={props.autoplay !== false}
+            style={{ 
+              width: '100%', 
+              height: '100%',
+              ...scaleStyle,
+            }}
+            renderConfig={props.renderConfig || {
+              devicePixelRatio: window.devicePixelRatio || 1,
+              autoResize: true,
+            }}
+            dotLottieRefCallback={handleDotLottieRef}
+            onError={(err: any) => {
+              console.error('[LazyLottie] DotLottieReact 错误:', err);
+              setError(err?.message || '未知错误');
+            }}
+            onLoad={() => {
+              console.log('[LazyLottie] DotLottieReact onLoad 回调触发');
+              setIsLoaded(true);
+              // 延迟隐藏图片，确保动画已显示
+              setTimeout(() => {
+                setIsImageVisible(false);
+              }, 50);
+              if (checkIntervalRef.current) {
+                clearInterval(checkIntervalRef.current);
+                checkIntervalRef.current = null;
+              }
+            }}
+          />
+        </div>
       </div>
     );
   } catch (err: any) {
@@ -215,9 +276,10 @@ const DotLottieReactWrapper = ({ src, ...props }: DotLottieReactProps) => {
  * - 支持 .lottie 格式（使用 DotLottieReact）
  * - 支持 .json 格式（使用 lottie-web）
  */
-const LazyLottie = memo(({ fallback, delay = 0, src, scale, ...props }: LazyLottieProps) => {
+const LazyLottie = memo(({ fallback, delay = 0, src, scale, fallbackImage, ...props }: LazyLottieProps) => {
   const [shouldLoad, setShouldLoad] = useState(false);
   const [jsonLoaded, setJsonLoaded] = useState(false);
+  const [isImageVisible, setIsImageVisible] = useState(true); // 图片可见性
   const containerRef = useRef<HTMLDivElement>(null);
   const lottieInstanceRef = useRef<any>(null);
 
@@ -231,6 +293,14 @@ const LazyLottie = memo(({ fallback, delay = 0, src, scale, ...props }: LazyLott
     src.endsWith('.webp') || 
     src.endsWith('.svg')
   );
+
+  // src 变化时重置状态
+  useEffect(() => {
+    if (src) {
+      setIsImageVisible(true); // 重置图片显示状态
+      setJsonLoaded(false); // 重置 JSON 加载状态
+    }
+  }, [src]);
 
   useEffect(() => {
     // 如果 delay 为 0，立即加载；否则延迟加载
@@ -367,6 +437,10 @@ const LazyLottie = memo(({ fallback, delay = 0, src, scale, ...props }: LazyLott
             if (containerRef.current && containerRef.current.children.length > 0) {
               console.log('[LazyLottie] JSON 动画已加载，子元素数量:', containerRef.current.children.length);
               setJsonLoaded(true);
+              // 延迟隐藏图片，确保动画已显示
+              setTimeout(() => {
+                setIsImageVisible(false);
+              }, 50);
               return true;
             }
             return false;
@@ -376,6 +450,10 @@ const LazyLottie = memo(({ fallback, delay = 0, src, scale, ...props }: LazyLott
           const onLoaded = () => {
             console.log('[LazyLottie] 动画加载事件触发');
             setJsonLoaded(true);
+            // 延迟隐藏图片，确保动画已显示
+            setTimeout(() => {
+              setIsImageVisible(false);
+            }, 50);
           };
 
           lottieInstanceRef.current.addEventListener('data_ready', onLoaded);
@@ -404,9 +482,11 @@ const LazyLottie = memo(({ fallback, delay = 0, src, scale, ...props }: LazyLott
             if (containerRef.current && containerRef.current.children.length > 0) {
               console.log('[LazyLottie] 超时后检测到动画已加载');
               setJsonLoaded(true);
+              setIsImageVisible(false);
             } else {
               console.warn('[LazyLottie] 超时后仍未检测到动画，强制隐藏 fallback');
               setJsonLoaded(true); // 强制隐藏，避免一直转圈
+              setIsImageVisible(false);
             }
           }, 2000);
         }
@@ -435,7 +515,7 @@ const LazyLottie = memo(({ fallback, delay = 0, src, scale, ...props }: LazyLott
 
   // 如果是图片格式，直接显示图片
   if (isImageFormat) {
-    const imageScale = props.scale ?? 1;
+    const imageScale = scale ?? 1;
     const imageScaleStyle = imageScale !== 1 ? {
       transform: `scale(${imageScale})`,
       transformOrigin: 'center center',
@@ -481,25 +561,69 @@ const LazyLottie = memo(({ fallback, delay = 0, src, scale, ...props }: LazyLott
       className="w-full h-full" 
       style={{ willChange: 'contents', position: 'relative', backgroundColor: '#FFFFFF' }}
     >
+      {/* 静态图片层 - 在动画加载过程中显示 */}
+      {fallbackImage && (
+        <img
+          src={fallbackImage}
+          alt="Character fallback"
+          style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            width: '100%',
+            height: '100%',
+            objectFit: 'contain',
+            opacity: isImageVisible ? 1 : 0,
+            transition: 'opacity 300ms ease-out',
+            zIndex: 1, // 图片始终在底层
+            pointerEvents: isImageVisible ? 'auto' : 'none', // 隐藏时禁用交互
+            ...(scale !== 1 ? {
+              transform: `scale(${scale})`,
+              transformOrigin: 'center center',
+            } : {}),
+          }}
+          onLoad={() => {
+            console.log('[LazyLottie] 静态图片加载完成:', fallbackImage);
+          }}
+          onError={(e) => {
+            console.error('[LazyLottie] 静态图片加载失败:', fallbackImage);
+          }}
+        />
+      )}
       {shouldLoad ? (
         isJsonFormat ? (
           // JSON 格式：显示容器，加载完成后隐藏 fallback
           <>
-            {!jsonLoaded && (
+            {!jsonLoaded && !fallbackImage && (
               <div className="absolute inset-0 flex items-center justify-center bg-transparent z-10">
                 {fallback || <LottieFallback />}
               </div>
             )}
+            {/* JSON 动画层 - 动画渲染在 containerRef 中 */}
+            <div
+              ref={containerRef}
+              style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                width: '100%',
+                height: '100%',
+                opacity: jsonLoaded ? 1 : 0,
+                transition: 'opacity 300ms ease-out',
+                zIndex: 2, // 动画始终在图片上层
+                pointerEvents: jsonLoaded ? 'auto' : 'none',
+              }}
+            />
           </>
         ) : (
           <>
-            <Suspense fallback={fallback || <LottieFallback />}>
-              <DotLottieReactWrapper src={src} {...props} />
+            <Suspense fallback={fallbackImage ? null : (fallback || <LottieFallback />)}>
+              <DotLottieReactWrapper src={src} fallbackImage={fallbackImage} scale={scale} {...props} />
             </Suspense>
           </>
         )
       ) : (
-        fallback || <LottieFallback />
+        fallbackImage ? null : (fallback || <LottieFallback />)
       )}
     </div>
   );

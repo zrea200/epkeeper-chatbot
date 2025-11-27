@@ -29,7 +29,7 @@ export default function Chat() {
       const params = new URLSearchParams(window.location.search);
       const avatar = params.get('avatar');
       if (avatar) {
-        const characterId = avatar === '电盟主' ? 'leader' : 'escort';
+        const characterId = (avatar === '电盟主' || avatar === '电小虎') ? 'leader' : 'escort';
         const character = getCharacterById(characterId);
         if (character) {
           return character;
@@ -185,7 +185,7 @@ export default function Chat() {
       }
       
       // 根据avatar设置角色（确保角色已正确设置）
-      const characterId = avatar === '电盟主' ? 'leader' : 'escort';
+      const characterId = (avatar === '电盟主' || avatar === '电小虎') ? 'leader' : 'escort';
       const character = getCharacterById(characterId);
       if (character) {
         console.log('[Chat] 确保角色正确:', character.name);
@@ -967,22 +967,7 @@ export default function Chat() {
           </div>
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleSwitchCharacter}
-            disabled={!!nfcContext}
-            className="text-xs h-8 px-3 rounded-lg border-2 font-medium"
-            style={{
-              borderColor: selectedCharacter.accentColor,
-              color: selectedCharacter.accentColor,
-              opacity: nfcContext ? 0.5 : 1,
-              cursor: nfcContext ? 'not-allowed' : 'pointer',
-            }}
-            title={nfcContext ? 'NFC场景下无法切换顾问' : '切换顾问'}
-          >
-            切换顾问
-          </Button>
+          {/* 切换顾问按钮已隐藏，保留单一角色 */}
           <Button
             variant="ghost"
             size="icon"
@@ -1022,6 +1007,7 @@ export default function Chat() {
               autoplay
               delay={0}
               scale={selectedCharacter.id === 'escort' ? 1 : 1}
+              fallbackImage={selectedCharacter.displayAvatar}
               style={{ 
                 width: '100%', 
                 height: '100%', 

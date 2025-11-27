@@ -104,7 +104,7 @@ export default defineConfig({
     },
   },
   server: {
-    port: 3001,
+    port: 3030,
     strictPort: true, // 端口被占用时直接报错，避免自动改端口
     host: true,
       // 代理 API 请求到后端服务器（开发环境）
@@ -147,7 +147,7 @@ export default defineConfig({
   },
   // preview 模式配置（用于预览生产构建）
   preview: {
-    port: 3001,
+    port: 3030,
     strictPort: true,
     host: true,
     // preview 模式也需要代理 API 请求到后端服务器

@@ -24,7 +24,7 @@ export const characters: Character[] = [
     description: '专业的智能管家团队，为您提供全方位的电力运维保障',
     greeting: '你好！我是电管家的智能管家。我们致力于为您提供最专业的电力运维服务。请问有什么我可以帮助您的吗？',
     avatar: '/avatars/Asset3@4x.png',
-    displayAvatar: '/avatars/Asset3@4x.png',
+    displayAvatar: '/avatars/Asset2.png',
     bgColor: '#FFFFFF',
     accentColor: '#F3D621',
     animations: {
@@ -36,12 +36,12 @@ export const characters: Character[] = [
   },
   {
     id: 'leader',
-    name: '电盟主',
-    title: '能源专家',
+    name: '电小虎',
+    title: '智能微电网运营小助手',
     description: '资深能源专家，为您解答电力能源的各种问题',
-    greeting: '欢迎来到电管家！我是您的能源专家。我可以为您详细介绍我们的各项服务。请问您想了解什么呢？',
+    greeting: '你好！我是电管家的智能管家。我们致力于为您提供最专业的电力运维服务。请问有什么我可以帮助您的吗？',
     avatar: '/avatars/Asset4@4x.png',
-    displayAvatar: '/avatars/Asset4@4x.png',
+    displayAvatar: '/avatars/Asset1.png',
     bgColor: '#FFFFFF',
     accentColor: '#2980AE',
     animations: {
@@ -54,7 +54,8 @@ export const characters: Character[] = [
 ];
 
 export function getDefaultCharacter(): Character {
-  return characters[0];
+  // 默认使用电小虎 (leader)
+  return characters.find(c => c.id === 'leader') || characters[0];
 }
 
 export function getCharacterById(id: string): Character | undefined {
